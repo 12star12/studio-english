@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1=".1" y1="0" x2=".9" y2="1">
+      <stop offset="0" stop-color="#44547C"/>
+      <stop offset=".5" stop-color="#2C3958"/>
+      <stop offset="1" stop-color="#1A2234"/>
+    </linearGradient>
+    <linearGradient id="pgL" x1="0" y1="0" x2=".3" y2="1">
+      <stop offset="0" stop-color="#FFFAEE"/>
+      <stop offset="1" stop-color="#EDD6AE"/>
+    </linearGradient>
+    <linearGradient id="pgR" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBF0D6"/>
+      <stop offset="1" stop-color="#DFC294"/>
+    </linearGradient>
+    <linearGradient id="bm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F5B95E"/>
+      <stop offset="1" stop-color="#D4801F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".58" r=".55">
+      <stop offset="0" stop-color="#E9A23B" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#E9A23B" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="118" fill="url(#bg)"/>
+  <ellipse cx="256" cy="290" rx="210" ry="160" fill="url(#glow)"/>
+
+  <!-- 书页投影 -->
+
+  <!-- 左页 -->
+  <path d="M248 254 C206 220 144 208 96 218 C84 220 78 227 78 239 L78 342 C78 354 84 361 96 358 C144 348 206 360 248 392 Z"
+        fill="url(#pgL)"/>
+  <!-- 右页 -->
+  <path d="M264 254 C306 220 368 208 416 218 C428 220 434 227 434 239 L434 342 C434 354 428 361 416 358 C368 348 306 360 264 392 Z"
+        fill="url(#pgR)"/>
+
+  <!-- 书页纹理 -->
+  <g stroke="#B0905F" stroke-linecap="round" opacity=".4">
+    <path d="M112 268 H210" stroke-width="10"/>
+    <path d="M112 298 H210" stroke-width="10"/>
+    <path d="M112 328 H180" stroke-width="10"/>
+  </g>
+  <g stroke="#A6814E" stroke-linecap="round" opacity=".34">
+    <path d="M302 268 H400" stroke-width="10"/>
+    <path d="M302 298 H400" stroke-width="10"/>
+    <path d="M332 328 H400" stroke-width="10"/>
+  </g>
+
+  <!-- 书签 -->
+  <path d="M286 210 H322 V330 L304 312 L286 330 Z" fill="url(#bm)"/>
+
+  <!-- 星光 -->
+  <path d="M408 132 C412 160 420 168 448 172 C420 176 412 184 408 212 C404 184 396 176 368 172 C396 168 404 160 408 132 Z"
+        fill="#F5C174"/>
+
+  <!-- 书页厚度 -->
+  <path d="M78 342 C78 354 84 361 96 358 C144 348 206 360 248 392 L248 400 C206 368 144 356 96 366 C84 369 78 362 78 350 Z" fill="#C9A876" opacity=".55"/>
+  <path d="M434 342 C434 354 428 361 416 358 C368 348 306 360 264 392 L264 400 C306 368 368 356 416 366 C428 369 434 362 434 350 Z" fill="#B8945F" opacity=".5"/>
+
+  <!-- 书脊 -->
+  <path d="M256 250 V394" stroke="#BE9F72" stroke-width="3.5" opacity=".4" stroke-linecap="round"/>
+</svg>

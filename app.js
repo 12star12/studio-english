@@ -1,0 +1,1421 @@
+/* Studio - AI English Studio */
+'use strict';
+
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function dstr(d = new Date()) {
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+const TODAY = dstr();
+
+const PROVIDERS = {
+  zhipu: { name: '智谱 GLM（推荐·永久免费）', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', note: '国内直连，GLM-4-Flash 永久免费，注册即用' },
+  silicon: { name: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen2.5-7B-Instruct', note: '部分小模型长期免费，速度较快' },
+  doubao: { name: '火山方舟（豆包）', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-1-5-lite-32k-250115', note: '每天约 200 万 tokens，需先在控制台开通模型' },
+  openrouter: { name: 'OpenRouter（需网络）', baseUrl: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat-v3:free', note: '有 :free 模型，国内需自行解决网络' },
+  custom: { name: '自定义 OpenAI 兼容接口', baseUrl: '', model: '', note: '任何 OpenAI 兼容的 base_url 都可以' }
+};
+
+const DEFAULT_DB = {
+  config: {
+    provider: 'zhipu', baseUrl: PROVIDERS.zhipu.baseUrl, apiKey: '', model: PROVIDERS.zhipu.model,
+    interests: ['金融与商业', '科技', '艺术', '文学'],
+    length: 250, topic: 'auto', accent: 'en-US', rate: 1, voice: 'en-US-AriaNeural'
+  },
+  articles: [], words: {}, books: [],
+  progress: { xp: 0, listenLog: [], readLog: [], guessLog: [], days: {}, doneIds: [], trans: '', coll: '', achievements: {} }
+};
+
+let DB = JSON.parse(JSON.stringify(DEFAULT_DB));
+let cur = null;          // 当前文章
+let curIdx = 0, playing = false, loop = -1;
+
+const ACHIEVEMENTS = [
+  { id: 'first', icon: '🌱', name: '第一篇', desc: '读完第一篇文章', test: s => s.articles.filter(a => a.done).length >= 1 },
+  { id: 'w10', icon: '📚', name: '十词', desc: '收集 10 个词', test: s => Object.keys(s.words).length >= 10 },
+  { id: 'w50', icon: '🗂', name: '五十词', desc: '收集 50 个词', test: s => Object.keys(s.words).length >= 50 },
+  { id: 'w100', icon: '💎', name: '百词', desc: '收集 100 个词', test: s => Object.keys(s.words).length >= 100 },
+  { id: 'a5', icon: '📖', name: '五篇', desc: '读完 5 篇文章', test: s => s.articles.filter(a => a.done).length >= 5 },
+  { id: 'a20', icon: '🏛', name: '二十篇', desc: '读完 20 篇文章', test: s => s.articles.filter(a => a.done).length >= 20 },
+  { id: 'perfect', icon: '🎯', name: '全对', desc: '听力题一次全对', test: s => s.progress.listenLog.length >= 2 && s.progress.listenLog.slice(-2).every(x => x) },
+  { id: 'sentence', icon: '✍️', name: '第一次造句', desc: '用搭配写出一个句子', test: s => !!s.progress.coll },
+  { id: 'days5', icon: '🔥', name: '五天', desc: '在不同的 5 天里学习', test: s => Object.keys(s.progress.days).length >= 5 },
+  { id: 'lv5', icon: '⭐', name: 'Lv.5', desc: '达到 5 级', test: s => level(s.progress.xp).lv >= 5 },
+  { id: 'lv10', icon: '🌟', name: 'Lv.10', desc: '达到 10 级', test: s => level(s.progress.xp).lv >= 10 },
+  { id: 'long', icon: '🧗', name: '啃下长文', desc: '读完一篇 400 词的长文', test: s => s.articles.some(a => a.done && a.len >= 380) },
+  { id: 'first3', icon: '✅', name: '第一个三勾', desc: '有一个词拿到三个勾', test: s => Object.values(s.words).some(w => (w.checks || 0) >= 3) },
+  { id: 'm10', icon: '🌾', name: '十个掌握', desc: '10 个词达到初步掌握', test: s => Object.values(s.words).filter(w => (w.checks || 0) >= 3).length >= 10 },
+  { id: 'm50', icon: '🏅', name: '五十个掌握', desc: '50 个词达到初步掌握', test: s => Object.values(s.words).filter(w => (w.checks || 0) >= 3).length >= 50 },
+  { id: 'guesser', icon: '🎲', name: '一轮全中', desc: '猜词全部答对', test: s => s.progress.guessLog.some(g => g.total >= 5 && g.right === g.total) }
+];
+
+/* ---------------- 存储 ---------------- */
+function save() {
+  if (window.studio && window.studio.saveDB) window.studio.saveDB('data', DB);
+  else localStorage.setItem('studio-db', JSON.stringify(DB));
+  renderSideLevel();
+}
+async function boot() {
+  const bf = $('#bookFile');
+  if (bf) bf.onchange = e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => importBook(String(rd.result || ''), f.name.replace(/\.[^.]+$/, ''));
+    rd.readAsText(f, 'utf-8');
+    e.target.value = '';
+  };
+
+  let data = null;
+  if (window.studio && window.studio.loadDB) data = await window.studio.loadDB('data');
+  else {
+    try { data = JSON.parse(localStorage.getItem('studio-db')); } catch (e) { data = null; }
+  }
+  if (data && data.config) {
+    DB = Object.assign(JSON.parse(JSON.stringify(DEFAULT_DB)), data);
+    DB.config = Object.assign({}, DEFAULT_DB.config, data.config || {});
+    DB.progress = Object.assign({}, DEFAULT_DB.progress, data.progress || {});
+  }
+  renderHome();
+  renderSideLevel();
+  const h = new Date().getHours();
+  $('#greet').textContent = h < 6 ? '这么晚还没睡，读一小段就去休息吧'
+    : h < 11 ? '早上好，今天也为自己留一点时间吧'
+    : h < 14 ? '中午好，读一小段换换脑子'
+    : h < 19 ? '今天也加油呀'
+    : '晚上好，读一小段就够';
+  if (!DB.config.apiKey) {
+    $('#greetSub').textContent = '还差一步：在设置里填一个免费 Key，就能每天自动生成文章了。';
+  }
+}
+
+/* ---------------- 等级 ---------------- */
+function level(xp) {
+  const per = 120;
+  const lv = Math.floor(xp / per) + 1;
+  return { lv, cur: xp % per, need: per, pct: (xp % per) / per * 100 };
+}
+function renderSideLevel() {
+  const L = level(DB.progress.xp || 0);
+  $('#lvlMini').textContent = 'Lv.' + L.lv;
+  $('#xpMini').textContent = (DB.progress.xp || 0) + ' XP';
+  const b = $('#lvlBadge .lvl-num'); if (b) b.textContent = L.lv;
+  const f = $('#xpFill'); if (f) f.style.width = L.pct + '%';
+  const n = $('#xpNum'); if (n) n.textContent = L.cur + ' / ' + L.need + ' XP';
+}
+
+/* ---------------- 视图 ---------------- */
+function go(v) {
+  stopAudio();
+  ['home', 'listen', 'read', 'guess', 'train', 'done', 'library', 'words', 'growth', 'settings']
+    .forEach(k => { const el = $('#v-' + k); if (el) el.hidden = k !== v; });
+  $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === v));
+  if (v === 'library') renderLibrary();
+  if (v === 'guess') renderGuess();
+  if (v === 'words') renderWords();
+  if (v === 'growth') renderGrowth();
+  if (v === 'settings') renderSettings();
+  if (v === 'home') renderHome();
+  $('#main').scrollTop = 0;
+}
+document.addEventListener('click', e => {
+  const nav = e.target.closest('#nav a');
+  if (nav) { go(nav.dataset.v); return; }
+  const g = e.target.closest('[data-go]');
+  if (g) { go(g.dataset.go); return; }
+});
+
+/* ---------------- 首页 ---------------- */
+function todayArticle() {
+  return DB.articles.find(a => a.date === TODAY) || null;
+}
+
+function renderHome() {
+  const L = level(DB.progress.xp || 0);
+  $('#lvlBadge .lvl-num').textContent = L.lv;
+  $('#xpFill').style.width = L.pct + '%';
+  $('#xpNum').textContent = L.cur + ' / ' + L.need + ' XP';
+
+  const done = DB.articles.filter(a => a.done).length;
+  $('#msArticles').textContent = done;
+  $('#msWords').textContent = Object.keys(DB.words).length;
+  const mEl = $('#msMastered');
+  if (mEl) mEl.textContent = Object.values(DB.words).filter(w => (w.checks || 0) >= 3).length;
+  const ll = DB.progress.listenLog;
+  const accEl = $('#msAcc');
+  if (accEl) accEl.textContent = ll.length ? Math.round(ll.reduce((a, b) => a + b, 0) / ll.length * 100) + '%' : '—';
+
+  renderSpark();
+  renderCollectionPreview();
+  renderCollFoot();
+  renderToday();
+}
+
+function renderToday() {
+  const a = todayArticle();
+  const box = $('#todayBody');
+  $('#todayTag').textContent = a ? (a.done ? '今天已完成' : '待读') : '还没生成';
+
+  if (!a) { box.innerHTML = genFormHTML(); bindGenForm(); return; }
+
+  const img = artThumb(a.topic);
+  box.innerHTML = `
+    <div class="today-mini">
+      <div class="today-thumb">${img}</div>
+      <div class="today-info">
+        <h2>${esc(a.title)}</h2>
+        <div class="preview">${esc((a.paras[0] && a.paras[0].en.join(' ')) || '')}</div>
+        <div class="tags">
+          <span class="pill">${esc(a.topic || '综合')}</span>
+          <span class="pill">${a.len} 词</span>
+          <span class="pill">约 ${Math.max(6, Math.round(a.len / 22) + 5)} 分钟</span>
+          ${a.done ? '<span class="pill" style="color:#4E7A3C;background:#EDF7E8">已完成</span>' : ''}
+        </div>
+        <div class="today-acts">
+          <button class="btn b sm" id="continueBtn">${a.done ? '再读一遍' : '继续读'}</button>
+          <button class="btn sm" id="regenBtn">换一篇</button>
+        </div>
+      </div>
+    </div>`;
+  $('#continueBtn').onclick = () => openArticle(a);
+  $('#regenBtn').onclick = () => {
+    DB.articles = DB.articles.filter(x => x.id !== a.id);
+    save(); renderToday();
+  };
+}
+
+function genFormHTML() {
+  const LEN = [
+    { n: 150, t: '短', d: '碎片时间' },
+    { n: 250, t: '中', d: '日常一篇' },
+    { n: 400, t: '长', d: '深度阅读' }
+  ];
+  const cfg = DB.config;
+  return `
+    <div class="gen-empty">
+      <div>
+        <div class="card-h" style="margin-bottom:9px;font-size:12px;color:var(--sub);font-weight:400">今天想读多长</div>
+        <div class="len-row">
+          ${LEN.map(x => `<div class="len-opt ${cfg.length === x.n ? 'on' : ''}" data-len="${x.n}">
+            <b>${x.t} · ${x.n} 词</b><span>${x.d}</span></div>`).join('')}
+        </div>
+      </div>
+      <div>
+        <div class="card-h" style="margin-bottom:9px;font-size:12px;color:var(--sub);font-weight:400">写什么</div>
+        <div class="topic-row">
+          <div class="topic ${cfg.topic === 'auto' ? 'on' : ''}" data-topic="auto">让我挑</div>
+          ${cfg.interests.map(t => `<div class="topic ${cfg.topic === t ? 'on' : ''}" data-topic="${esc(t)}">${esc(t)}</div>`).join('')}
+        </div>
+      </div>
+      <div class="gen-actions">
+        <button class="btn b" id="genBtn">生成今天这篇</button>
+        <span class="gen-hint" id="genHint">${cfg.apiKey ? '会用你喜欢的题材，挑几个你还没掌握的六级词' : '需要先在设置里填一个免费 API Key'}</span>
+      </div>
+    </div>`;
+}
+
+function bindGenForm() {
+  $$('#todayBody .len-opt').forEach(el => el.onclick = () => {
+    DB.config.length = +el.dataset.len; save();
+    $$('#todayBody .len-opt').forEach(x => x.classList.toggle('on', x === el));
+  });
+  $$('#todayBody .topic').forEach(el => el.onclick = () => {
+    DB.config.topic = el.dataset.topic; save();
+    $$('#todayBody .topic').forEach(x => x.classList.toggle('on', x === el));
+  });
+  const btn = $('#genBtn');
+  if (btn) btn.onclick = () => {
+    if (!DB.config.apiKey) { toast('先去设置里填 API Key，免费的'); go('settings'); return; }
+    generate();
+  };
+}
+
+function renderSpark() {
+  const days = {};
+  (DB.articles || []).forEach(a => { if (a.done) days[a.date] = (days[a.date] || 0) + a.len; });
+  const vals = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    vals.push(days[dstr(d)] || 0);
+  }
+  if (!vals.reduce((a, b) => a + b, 0)) {
+    $('#sparkline').style.display = 'none';
+    let e = document.querySelector('.spark-empty');
+    if (!e) { e = document.createElement('div'); e.className = 'spark-empty'; $('.spark-wrap').appendChild(e); }
+    e.textContent = '读完第一篇，这里会长出一条线';
+    return;
+  }
+  $('#sparkline').style.display = '';
+  const se = document.querySelector('.spark-empty'); if (se) se.remove();
+  const max = Math.max(60, ...vals);
+  const W = 260, H = 70, pad = 4;
+  const step = (W - pad * 2) / (vals.length - 1);
+  const pts = vals.map((v, i) => [pad + i * step, H - pad - (v / max) * (H - pad * 2)]);
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const area = line + ` L${pts[pts.length - 1][0].toFixed(1)} ${H - pad} L${pts[0][0].toFixed(1)} ${H - pad} Z`;
+  const last = pts[pts.length - 1];
+  $('#sparkline').innerHTML = `
+    <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4A7BF7" stop-opacity=".16"/><stop offset="1" stop-color="#4A7BF7" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${area}" fill="url(#sg)"/>
+    <path d="${line}" fill="none" stroke="#4A7BF7" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3" fill="#4A7BF7"/>`;
+}
+
+function renderCollectionPreview() {
+  const ws = Object.entries(DB.words).slice(-14);
+  if (!ws.length) {
+    $('#collectionPreview').innerHTML = '<div class="chips">' +
+      Array.from({ length: 9 }, () => '<span class="chip ghost">· · ·</span>').join('') + '</div>';
+    return;
+  }
+  $('#collectionPreview').innerHTML = '<div class="chips">' + ws.map(([w, v]) =>
+    `<span class="chip l${(v.checks || 0) >= 3 ? 3 : (v.checks || 0) > 0 ? 2 : 1}"><i></i>${esc(w)}<span style="color:#B5AFA4;font-size:10.5px">${esc(v.zh || '')}</span></span>`
+  ).join('') + '</div>';
+}
+
+function renderCollFoot() {
+  const foot = $('#collFoot');
+  if (!foot) return;
+  const m = masteredCount();
+  const learning = Object.values(DB.words).filter(w => { const c = w.checks || 0; return c > 0 && c < 3; }).length;
+  const total = bookPool().length;
+  foot.innerHTML = `
+    <div class="cfs">已初步掌握 <b style="color:#5BA545">${m}</b> 个</div>
+    <div class="cfs">学习中 <b style="color:#E9A23B">${learning}</b> 个</div>
+    <div class="cfs" style="margin-left:auto">词书共 <b>${total}</b> 个词</div>`;
+}
+
+function artThumb(topic) {
+  const palettes = {
+    '艺术': ['#1B2A4A', '#3E5C86', '#F2E6B8'],
+    '金融与商业': ['#1F3A2E', '#3D6B52', '#EADFC0'],
+    '科技': ['#1A2540', '#3B5AA8', '#C6D8F5'],
+    '文学': ['#3A2430', '#6B4457', '#F0DCC8'],
+    '历史': ['#33281C', '#6B5540', '#E8D6B4']
+  };
+  const p = palettes[topic] || ['#22303F', '#465A72', '#E4DCC8'];
+  return `<svg viewBox="0 0 120 92" preserveAspectRatio="none">
+    <defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${p[0]}"/><stop offset="1" stop-color="${p[1]}"/></linearGradient></defs>
+    <rect width="120" height="92" fill="url(#tg)"/>
+    <path d="M-6 28 q20-14 40 0 t40 0 t40 0" stroke="${p[2]}" stroke-width="1" fill="none" opacity=".45"/>
+    <path d="M-6 44 q20-12 40 0 t40 0 t40 0" stroke="${p[2]}" stroke-width="1" fill="none" opacity=".3"/>
+    <g fill="${p[2]}" opacity=".85">
+      <circle cx="24" cy="18" r="2"/><circle cx="52" cy="30" r="1.4"/><circle cx="86" cy="16" r="1.7"/>
+      <circle cx="102" cy="34" r="1.2"/><circle cx="66" cy="48" r="1.1"/>
+    </g>
+    <path d="M0 92 L0 72 q16-9 30-2 q12 7 26-4 q14-9 26 2 q12 9 30 0 l8-3 L120 92 Z" fill="${p[0]}" opacity=".85"/>
+  </svg>`;
+}
+
+/* ---------------- 生成 ---------------- */
+/* 词书池：内置六级词 + 用户导入词书，去重 */
+function bookPool() {
+  const seen = new Set(), out = [];
+  const push = (w, p, zh) => {
+    const k = String(w || '').toLowerCase().trim();
+    if (!k || seen.has(k) || !/^[a-z][a-z'-]*$/.test(k)) return;
+    seen.add(k);
+    out.push({ w: k, p: p || '', zh: zh || '' });
+  };
+  (typeof CET6_WORDS !== 'undefined' ? CET6_WORDS : []).forEach(([w, p, zh]) => push(w, p, zh));
+  (DB.books || []).forEach(b => (b.words || []).forEach(x => push(x.w, x.p, x.zh)));
+  return out;
+}
+
+/* 选词：优先「还没拿满三个勾」的词，其余用没见过的；都够就随机 */
+function pickWords(n) {
+  const pool = bookPool();
+  if (!pool.length) return [];
+  const rec = DB.words;
+  const reviewing = pool.filter(x => rec[x.w] && (rec[x.w].checks || 0) < 3);
+  const unseen = pool.filter(x => !rec[x.w]);
+  const mastered = pool.filter(x => rec[x.w] && (rec[x.w].checks || 0) >= 3);
+  const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; };
+  shuffle(reviewing); shuffle(unseen); shuffle(mastered);
+
+  const out = [];
+  const wantReview = Math.min(reviewing.length, Math.ceil(n * 0.6));
+  out.push(...reviewing.slice(0, wantReview));
+  out.push(...unseen.slice(0, n - out.length));
+  if (out.length < n) out.push(...reviewing.slice(wantReview, wantReview + (n - out.length)));
+  if (out.length < n) out.push(...mastered.slice(0, n - out.length));
+  return out.map(x => x.w);
+}
+
+function buildPrompt() {
+  const c = DB.config;
+  const len = c.length;
+  const topic = c.topic === 'auto' ? '你自己挑一个最适合今天读的方向' : c.topic;
+  const words = pickWords(7);
+  const minW = Math.round(len * 0.88), maxW = Math.round(len * 1.12);
+  return {
+    words, minW, maxW,
+    messages: [
+      {
+        role: 'system',
+        content: '你是一位英语教学材料作者，为一位中国大学生写沉浸式英语阅读材料。你只输出严格合法的 JSON，不输出任何解释、不输出 markdown 代码块。'
+      },
+      {
+        role: 'user',
+        content:
+`写一篇英文短文，并配套练习。严格按下面要求。
+
+读者：中国大学生，计算机专业，正在准备六级，但不喜欢应试材料，喜欢有真实信息量的内容。
+兴趣方向：${topic}
+字数是最重要的一条，比其它所有要求都重要：
+正文总词数必须在 ${minW}–${maxW} 词之间。
+写法：写 4 段，每段 3–4 个句子。
+每个英文句子必须写够 18–25 个词，用从句、非谓语结构、插入语把意思说完整。
+不要写 "Art is important." 这种短句；六级阅读里的句子本来就是长的。
+写完数一遍总词数，不足 ${minW} 就补一个具体例子或一层解释进去。
+
+难度：六级水平，但必须自然好读，不能为了难而难。
+必须自然用到这 7 个词中的至少 5 个：${words.join(', ')}
+
+写作要求：
+- 要有真实的信息价值或文学性。不要写"随着社会发展"这种空洞开头。
+- 不要为了塞词而生硬拼接句子。
+- 每个句子单独作为一个数组元素，方便逐句朗读。
+
+只输出这个结构的 JSON：
+{
+  "title": "英文标题（不超过 8 个词）",
+  "topic": "两个汉字以内的主题标签",
+  "paras": [{"en": ["第一句", "第二句"], "zh": "这一整段的中文翻译"}],
+  "words": [{"w": "原文中的单词原形", "p": "n./v./adj./adv.", "zh": "中文释义"}],
+  "listening": [
+    {"q": "英文问题", "opts": ["A. ...", "B. ...", "C. ...", "D. ..."], "a": 1, "exp": "中文解析，指出依据在原文哪一处"},
+    {"q": "英文问题", "opts": ["A. ...", "B. ...", "C. ...", "D. ..."], "a": 2, "exp": "中文解析"}
+  ],
+  "reading": {"q": "英文题干，考查推理或作者态度", "opts": ["A. ...", "B. ...", "C. ...", "D. ..."], "a": 2, "exp": "中文解析，说明为什么其他三项错"},
+  "translation": {"en": "从原文挑一个长难句", "ref": "参考译文", "frame": "主干是什么、修饰成分是什么", "err": "学习者常见的译错点"},
+  "collocation": {"ph": "一个值得积累的搭配", "zh": "中文含义", "ex": "原文中的例句", "demo": "一个新的示范句", "frame": "用法要点和常见错误"}
+}
+
+words 给 6–8 个，必须是正文里真实出现的词。listening 必须 2 道题。a 是正确选项的下标（0–3）。所有 opts 必须 4 项，且以 "A. " "B. " "C. " "D. " 开头。`
+      }
+    ]
+  };
+}
+
+function parseJSON(text) {
+  let t = String(text).trim();
+  t = t.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  const s = t.indexOf('{'), e = t.lastIndexOf('}');
+  if (s < 0 || e < 0) throw new Error('没有找到 JSON');
+  let body = t.slice(s, e + 1);
+  try { return JSON.parse(body); }
+  catch (err) {
+    body = body.replace(/,\s*([}\]])/g, '$1').replace(/[\u201c\u201d]/g, '"');
+    return JSON.parse(body);
+  }
+}
+
+function normalize(obj) {
+  if (!obj || !Array.isArray(obj.paras) || !obj.paras.length) throw new Error('缺少 paras');
+  let count = 0;
+  obj.paras = obj.paras.map(p => {
+    const en = Array.isArray(p.en) ? p.en : String(p.en || '').split(/(?<=[.!?])\s+/);
+    const clean = en.map(s => String(s).trim()).filter(Boolean);
+    count += clean.join(' ').split(/\s+/).length;
+    return { en: clean, zh: String(p.zh || '') };
+  });
+  obj.len = count;
+  obj.title = obj.title || 'Untitled';
+  obj.words = Array.isArray(obj.words) ? obj.words.filter(w => w && w.w) : [];
+  obj.listening = Array.isArray(obj.listening) ? obj.listening : [];
+  return obj;
+}
+
+async function generate() {
+  const overlay = $('#genOverlay');
+  overlay.hidden = false;
+  const steps = $$('.gen-step');
+  steps.forEach(s => s.classList.remove('on'));
+  let si = 0, pct = 4;
+  steps[0].classList.add('on');
+  $('#genFill').style.width = pct + '%';
+  const timer = setInterval(() => {
+    pct = Math.min(92, pct + Math.random() * 7);
+    $('#genFill').style.width = pct + '%';
+    if (pct > (si + 1) * 22 && si < steps.length - 1) {
+      si++; steps.forEach((s, i) => s.classList.toggle('on', i <= si));
+    }
+  }, 1300);
+
+  const { messages, words, minW, maxW } = buildPrompt();
+  const c = DB.config;
+  let res = await window.studio.chat({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model, messages, temperature: 0.85, maxTokens: 4096 });
+
+  clearInterval(timer);
+  if (!res.ok) {
+    overlay.hidden = true;
+    $('#genFill').style.width = '0';
+    alert('生成失败：' + res.error + '\n\n可以去设置里检查 Key、接口地址和模型名。');
+    return;
+  }
+
+  let data = null, errMsg = '';
+  try { data = normalize(parseJSON(res.content)); }
+  catch (e) {
+    errMsg = e.message;
+    // 重试一次，强制只要 JSON
+    const retry = await window.studio.chat({
+      baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model, temperature: 0.6,
+      maxTokens: 4096,
+      messages: messages.concat([
+        { role: 'assistant', content: res.content.slice(0, 1200) },
+        { role: 'user', content: '你的输出不能被解析为 JSON。请重新输出，只输出 JSON 本身，不要任何其他文字、不要 markdown 代码块。' }
+      ])
+    });
+    if (retry.ok) { try { data = normalize(parseJSON(retry.content)); } catch (e2) { errMsg = e2.message; } }
+  }
+
+  if (data && data.len < minW * 0.85) {
+    const r2 = await window.studio.chat({
+      baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model, temperature: 0.75, maxTokens: 4096,
+      messages: messages.concat([
+        { role: 'assistant', content: res.content.slice(0, 4000) },
+        { role: 'user', content: `这篇只有 ${data.len} 个词，太短了，达不到 ${minW}–${maxW} 词。请以它为基础重写一遍：
+- 保留原来的主题、观点和已用到的目标词
+- 每段补充具体的例子、数据、因果解释或反例，让内容真的有信息量
+- 不要注水，不要重复同一层意思，不要靠形容词凑字数
+- 总词数必须落在 ${minW}–${maxW} 之间
+只输出完整的 JSON，结构完全不变。` }
+      ])
+    });
+    if (r2.ok) {
+      try {
+        const d2 = normalize(parseJSON(r2.content));
+        if (d2.len > data.len) data = d2;
+      } catch (e) { }
+    }
+  }
+
+  $('#genFill').style.width = '100%';
+  setTimeout(() => { overlay.hidden = true; $('#genFill').style.width = '0'; }, 260);
+
+  if (!data) {
+    alert('AI 返回的内容没能解析成文章（' + errMsg + '）。\n换个模型或再试一次通常就好了。');
+    return;
+  }
+
+  data.id = 'a' + Date.now();
+  data.date = TODAY;
+  data.topic = data.topic || (c.topic === 'auto' ? '综合' : c.topic);
+  data.createdAt = Date.now();
+  data.done = false;
+  data.seed = words;
+  DB.articles.unshift(data);
+  bumpDay(data.len);
+  save();
+  renderHome();
+  toast('写好了 · ' + data.len + ' 词');
+}
+
+function bumpDay(n) {
+  const d = DB.progress.days[TODAY] || { words: 0, n: 0 };
+  d.words += n; d.n += 1;
+  DB.progress.days[TODAY] = d;
+}
+
+/* ---------------- 打开文章 ---------------- */
+function openArticle(a) {
+  cur = a; curIdx = 0; loop = -1;
+  $('#artTitle').textContent = a.title;
+  $('#accent').value = curVoice();
+  $('#rate').value = String(DB.config.rate || 1);
+  $('#readRate').value = String(DB.config.rate || 1);
+  buildSents();
+  renderListen();
+  renderQ();
+  renderRead();
+  renderTrain();
+  go('listen');
+  prefetch(0, 4);
+}
+
+function buildSents() {
+  cur._sents = [];
+  cur.paras.forEach((p, pi) => p.en.forEach(en => cur._sents.push({ en, p: pi })));
+}
+
+/* ---------------- 语音 ---------------- */
+const VOICES = [
+  { id: 'en-US-AriaNeural', name: 'Aria · 美式女声', acc: 'en-US' },
+  { id: 'en-US-JennyNeural', name: 'Jenny · 美式女声（轻）', acc: 'en-US' },
+  { id: 'en-US-GuyNeural', name: 'Guy · 美式男声', acc: 'en-US' },
+  { id: 'en-US-AndrewNeural', name: 'Andrew · 美式男声（沉）', acc: 'en-US' },
+  { id: 'en-GB-SoniaNeural', name: 'Sonia · 英式女声', acc: 'en-GB' },
+  { id: 'en-GB-RyanNeural', name: 'Ryan · 英式男声', acc: 'en-GB' }
+];
+const audioCache = new Map();
+const audioEl = new Audio();
+audioEl.preload = 'auto';
+let ttsWarned = false;
+
+function curVoice() { return DB.config.voice || 'en-US-AriaNeural'; }
+
+async function getAudio(text, voice) {
+  const v = voice || curVoice();
+  const key = v + '|' + text;
+  if (audioCache.has(key)) return audioCache.get(key);
+  if (!window.studio || !window.studio.tts) return null;
+  const res = await window.studio.tts({ text, voice: v });
+  if (!res.ok) {
+    if (!ttsWarned) { ttsWarned = true; toast('在线语音不可用：' + res.error); }
+    return null;
+  }
+  const bin = atob(res.data);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([arr], { type: 'audio/mpeg' }));
+  audioCache.set(key, url);
+  return url;
+}
+
+let prefetchChain = Promise.resolve();
+function prefetch(from, n) {
+  const sents = cur && cur._sents; if (!sents) return;
+  const end = Math.min(sents.length, from + n);
+  for (let i = from; i < end; i++) {
+    const txt = sents[i].en;
+    prefetchChain = prefetchChain
+      .then(() => getAudio(txt))
+      .catch(() => { })
+      .then(() => new Promise(r => setTimeout(r, 120)));
+  }
+}
+
+function fmt(s) { return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
+
+function setPlayIcon(isPlaying) {
+  const ic = $('#playIcon');
+  if (ic) ic.innerHTML = isPlaying
+    ? '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>'
+    : '<path d="M8.5 5.5v13l10.5-6.5z" fill="#2A2825"/>';
+  const rp = $('#readPlay');
+  if (rp) rp.textContent = isPlaying ? '⏸ 停止' : '▶ 全文朗读';
+}
+
+async function speak(i) {
+  const sents = cur && cur._sents;
+  if (!sents || i < 0 || i >= sents.length) { stopAudio(); return; }
+  stopAudio();
+  curIdx = i; playing = true;
+  paint(); setPlayIcon(true);
+
+  const url = await getAudio(sents[i].en);
+  if (!playing) return;
+  if (!url) { fallbackSpeak(sents[i].en, i); return; }
+
+  audioEl.src = url;
+  audioEl.playbackRate = DB.config.rate || 1;
+  audioEl.onended = () => {
+    if (!playing) return;
+    const n = loop >= 0 ? loop : i + 1;
+    if (n >= sents.length) { stopAudio(); return; }
+    setTimeout(() => { if (playing) speak(n); }, 150);
+  };
+  audioEl.play().catch(() => { });
+  prefetch(i + 1, 3);
+}
+
+function fallbackSpeak(text, i) {
+  const ss = window.speechSynthesis;
+  if (!ss) { toast('这台机器没有可用的语音引擎'); stopAudio(); return; }
+  const v = ss.getVoices().find(x => /^en/i.test(x.lang));
+  if (!v) { toast('没有英文语音，请检查系统语音包'); stopAudio(); return; }
+  const u = new SpeechSynthesisUtterance(text);
+  u.voice = v; u.lang = v.lang; u.rate = DB.config.rate || 1;
+  u.onend = () => {
+    if (!playing) return;
+    const sents = cur._sents;
+    const n = loop >= 0 ? loop : i + 1;
+    if (n >= sents.length) { stopAudio(); return; }
+    setTimeout(() => { if (playing) speak(n); }, 150);
+  };
+  ss.speak(u);
+}
+
+function stopAudio() {
+  playing = false;
+  try { audioEl.pause(); audioEl.currentTime = 0; } catch (e) { }
+  try { window.speechSynthesis.cancel(); } catch (e) { }
+  setPlayIcon(false);
+}
+
+async function speakText(t) {
+  const url = await getAudio(t);
+  if (url) {
+    const a = new Audio(url);
+    a.playbackRate = DB.config.rate || 1;
+    a.play().catch(() => { });
+    return;
+  }
+  const ss = window.speechSynthesis;
+  const v = ss.getVoices().find(x => /^en/i.test(x.lang));
+  if (!v) return;
+  const u = new SpeechSynthesisUtterance(t);
+  u.voice = v; u.lang = v.lang; u.rate = DB.config.rate || 1;
+  ss.speak(u);
+}
+
+function paint() {
+  const sents = cur && cur._sents; if (!sents) return;
+  const pct = (curIdx + 1) / sents.length * 100;
+  const f = $('#fill'); if (f) f.style.width = pct + '%';
+  if ($('#tNow')) { $('#tNow').textContent = fmt(curIdx * 11); $('#tAll').textContent = fmt(sents.length * 11); }
+  $$('#sentNav b').forEach(b => {
+    const i = +b.dataset.i;
+    b.classList.toggle('on', i === curIdx);
+    if (i < curIdx) b.classList.add('seen');
+  });
+  const cp = sents[curIdx].p;
+  $$('#artBody .para').forEach(el => el.classList.toggle('talking', playing && +el.dataset.p === cp));
+}
+
+/* ---------------- 听力页 ---------------- */
+function renderListen() {
+  if (!cur) return;
+  $('#btnLoop').classList.remove('on');
+  const groups = [];
+  cur._sents.forEach((s, i) => { (groups[s.p] = groups[s.p] || []).push(i); });
+  $('#sentNav').innerHTML = groups.map((arr, pi) =>
+    `<div class="prow"><span class="plabel">第 ${pi + 1} 段</span>` +
+    arr.map(i => `<b data-i="${i}">${i + 1}</b>`).join('') + '</div>'
+  ).join('');
+  $$('#sentNav b').forEach(b => b.onclick = () => speak(+b.dataset.i));
+  paint();
+}
+
+$('#playBtn').onclick = () => playing ? stopAudio() : speak(curIdx);
+$('#btnPrev').onclick = () => speak(Math.max(0, curIdx - 1));
+$('#btnNext').onclick = () => speak(Math.min(cur._sents.length - 1, curIdx + 1));
+$('#btnLoop').onclick = e => {
+  loop = loop === curIdx ? -1 : curIdx;
+  e.currentTarget.classList.toggle('on', loop >= 0);
+  if (loop >= 0) speak(curIdx);
+  toast(loop >= 0 ? '这一句会一直重复' : '取消循环');
+};
+$('#track').onclick = e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  speak(Math.min(cur._sents.length - 1, Math.floor((e.clientX - r.left) / r.width * cur._sents.length)));
+};
+$('#accent').onchange = e => { DB.config.voice = e.target.value; save(); };
+$('#rate').onchange = e => { DB.config.rate = parseFloat(e.target.value); save(); };
+$('#readRate').onchange = e => { DB.config.rate = parseFloat(e.target.value); save(); };
+
+let qi = 0, answered = [];
+function renderQ() {
+  if (!cur) return;
+  answered = answered.length === cur.listening.length ? answered : cur.listening.map(() => false);
+  const q = cur.listening[qi];
+  if (!q) { $('#qArea').innerHTML = '<div class="empty-note">这篇文章没有听力题</div>'; return; }
+  $('#qProg').textContent = (qi + 1) + ' / ' + cur.listening.length;
+  $('#qArea').innerHTML = `<div class="qn">Q${qi + 1}</div><div class="qtext">${esc(q.q)}</div>` +
+    q.opts.map((o, i) => `<label class="opt" data-i="${i}"><input type="radio" name="q${qi}" value="${i}">${esc(o)}</label>`).join('');
+  $('#qPrev').disabled = qi === 0;
+  if (!$('#toRead').hidden) return;
+}
+$('#qPrev').onclick = () => { if (qi > 0) { qi--; renderQ(); } };
+$('#qSubmit').onclick = () => {
+  const sel = $('#qArea input:checked');
+  if (!sel) { toast('先选一个'); return; }
+  const q = cur.listening[qi], pick = +sel.value;
+  $$('#qArea .opt').forEach((el, i) => {
+    if (i === q.a) el.classList.add('right');
+    else if (i === pick) el.classList.add('wrong');
+  });
+  if (!answered[qi]) {
+    answered[qi] = true;
+    DB.progress.listenLog.push(pick === q.a ? 1 : 0);
+    save();
+  }
+  const old = $('#qArea .exp'); if (old) old.remove();
+  const box = document.createElement('div');
+  box.className = 'exp';
+  box.innerHTML = `<b>${pick === q.a ? '答对了' : '正确是 ' + String.fromCharCode(65 + q.a)}</b><br>${esc(q.exp)}`;
+  $('#qArea').appendChild(box);
+  if (answered.every(Boolean)) { $('#toRead').hidden = false; checkAch(); }
+};
+$('#toRead').onclick = () => go('read');
+
+/* ---------------- 阅读页 ---------------- */
+function mark(text) {
+  let out = esc(text);
+  (cur.words || []).forEach(x => {
+    const re = new RegExp('\\b(' + x.w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\w*)\\b', 'gi');
+    out = out.replace(re, m => `<span class="w" data-w="${esc(x.w)}">${m}</span>`);
+  });
+  return out;
+}
+function renderRead() {
+  if (!cur) return;
+  $('#artBody').innerHTML = cur.paras.map((p, i) =>
+    `<p class="para" data-p="${i}"><button class="spk" data-sp="${i}" title="读这一段"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>${mark(p.en.join(' '))}</p>`
+  ).join('');
+  $('#zhText').innerHTML = cur.paras.map(p => `<p style="margin:0 0 10px">${esc(p.zh)}</p>`).join('');
+
+  $$('#artBody .para').forEach(el => el.addEventListener('click', e => {
+    const sp = e.target.closest('.spk');
+    if (sp) {
+      const pi = +sp.dataset.sp;
+      const idx = cur._sents.findIndex(s => s.p === pi);
+      if (idx >= 0) speak(idx);
+      return;
+    }
+    const w = e.target.closest('.w');
+    if (w) { addWord(w.dataset.w); speakText(w.textContent); }
+  }));
+
+  $('#wordList').innerHTML = (cur.words || []).map(x =>
+    `<div class="wordrow ${DB.words[x.w] ? 'hit' : ''}" data-w="${esc(x.w)}"><b>${esc(x.w)}</b><span>${esc(x.p || '')} ${esc(x.zh || '')}</span></div>`
+  ).join('') || '<div class="empty-note">这篇没有标注词汇</div>';
+  $$('#wordList .wordrow').forEach(el => el.onclick = () => {
+    addWord(el.dataset.w); speakText(el.dataset.w); el.classList.add('hit');
+  });
+}
+$('#readPlay').onclick = () => {
+  if (playing) { stopAudio(); return; }
+  speak(0);
+};
+$('#zhToggle').onclick = () => { const z = $('#zhAll'); z.hidden = !z.hidden; };
+$('#toGuess').onclick = () => { stopAudio(); startGuess(); };
+
+function addWord(w) {
+  const meta = (cur.words || []).find(x => x.w === w) || { p: '', zh: '' };
+  const bk = (typeof CET6_WORDS !== 'undefined' ? CET6_WORDS : []).find(x => x[0] === w);
+  const old = DB.words[w];
+  const checks = old ? (old.checks || 0) : 0;
+  DB.words[w] = {
+    p: meta.p || (bk && bk[1]) || (old && old.p) || '',
+    zh: meta.zh || (bk && bk[2]) || (old && old.zh) || '',
+    checks,
+    wrong: old ? (old.wrong || 0) : 0,
+    count: (old ? old.count : 0) + 1,
+    level: checks >= 3 ? 3 : checks > 0 ? 2 : 1,
+    firstAt: old ? old.firstAt : Date.now(), at: Date.now()
+  };
+  save(); toast(w + ' 已收进词书'); checkAch();
+}
+
+/* ---------------- 猜词：三个勾 = 初步掌握 ---------------- */
+const GUESS = { items: [], i: 0, right: 0, gained: 0, mastered: 0, saved: false };
+
+function masteredCount() {
+  return Object.values(DB.words).filter(w => (w.checks || 0) >= 3).length;
+}
+
+/* 取词的记录，没有就建一条 */
+function recOf(w, p, zh) {
+  let r = DB.words[w];
+  if (!r) {
+    r = DB.words[w] = {
+      p: p || '', zh: zh || '', checks: 0, wrong: 0, count: 0,
+      firstAt: Date.now(), at: Date.now(), level: 1
+    };
+  }
+  if (!r.zh && zh) r.zh = zh;
+  if (!r.p && p) r.p = p;
+  if (typeof r.checks !== 'number') r.checks = 0;
+  return r;
+}
+
+function checks3(n) {
+  n = Math.max(0, Math.min(3, n || 0));
+  return [0, 1, 2].map(i => '<b class="' + (i < n ? 'on' : '') + '">✓</b>').join('');
+}
+
+function statText(n) {
+  n = n || 0;
+  if (n >= 3) return '已初步掌握';
+  if (n === 0) return '还没拿到勾';
+  return '还差 ' + (3 - n) + ' 个勾';
+}
+
+function startGuess() {
+  if (!cur) return;
+  const pool = bookPool();
+  const items = (cur.words || []).map(x => {
+    const r = recOf(x.w, x.p, x.zh);
+    const zh = r.zh || x.zh || '';
+    const used = new Set([zh]);
+    const dist = [];
+    let guard = 0;
+    while (dist.length < 3 && guard++ < 400) {
+      const c = pool[Math.floor(Math.random() * pool.length)];
+      if (!c || !c.zh || used.has(c.zh)) continue;
+      used.add(c.zh); dist.push(c.zh);
+    }
+    if (dist.length < 3) {
+      const fb = ['完全相反的意思', '一个不相关的名词', '另一种常见但不对的解释'];
+      for (const f of fb) { if (dist.length < 3 && !used.has(f)) { used.add(f); dist.push(f); } }
+    }
+    const opts = [zh, ...dist].sort(() => Math.random() - 0.5);
+    return { w: x.w, p: x.p || r.p || '', zh, opts, a: opts.indexOf(zh), ok: null };
+  }).filter(it => it.zh && it.opts.length === 4);
+
+  if (!items.length) { toast('这篇没有可猜的词'); go('train'); return; }
+  GUESS.items = items; GUESS.i = 0; GUESS.right = 0;
+  GUESS.gained = 0; GUESS.mastered = 0; GUESS.saved = false;
+  go('guess');
+}
+
+function renderGuess() {
+  const card = $('#gCard');
+  if (!card) return;
+  if (!GUESS.items.length) {
+    $('#gCount').textContent = '';
+    card.innerHTML = `<div class="gdone"><div class="gdone-ico">📖</div>
+      <h2>还没有可以猜的词</h2>
+      <p class="glead">先读完一篇文章，词会跟着文章一起来到这里。</p>
+      <button class="btn b" data-go="read">回到原文</button></div>`;
+    return;
+  }
+  const it = GUESS.items[GUESS.i];
+  if (!it) return renderGuessDone();
+  const r = recOf(it.w, it.p, it.zh);
+  $('#gCount').textContent = (GUESS.i + 1) + ' / ' + GUESS.items.length;
+
+  const dots = GUESS.items.map((x, k) =>
+    `<i class="${x.ok === true ? 'ok' : x.ok === false ? 'no' : k === GUESS.i ? 'cur' : ''}"></i>`).join('');
+
+  card.innerHTML = `
+    <div class="gdots">${dots}</div>
+    <div class="gword" id="gWord">${esc(it.w)}</div>
+    <div class="gpos">${esc(it.p || ' ')}</div>
+    <div class="gask">它最接近哪个意思？</div>
+    <div class="gopts" id="gOpts">
+      ${it.opts.map((o, i) => `<button class="gopt" data-i="${i}"><i>${'ABCD'[i]}</i><span>${esc(o)}</span></button>`).join('')}
+    </div>
+    <div class="gfb" id="gFb" hidden></div>
+    <div class="gfacts">
+      <div class="gchecks" id="gChecks">${checks3(r.checks)}</div>
+      <div class="gstat" id="gStat">${statText(r.checks)}</div>
+      <button class="gspk" id="gSpk" title="听一下"><svg viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></button>
+    </div>
+    <div class="gfoot">
+      <button class="btn sm" id="gSkip">不会，直接看</button>
+      <button class="btn b" id="gNext" hidden>下一个 →</button>
+    </div>`;
+
+  $$('#gOpts .gopt').forEach(b => b.onclick = () => answerGuess(+b.dataset.i));
+  $('#gSkip').onclick = () => answerGuess(-1);
+  $('#gNext').onclick = () => { GUESS.i++; renderGuess(); };
+  $('#gSpk').onclick = () => speakText(it.w);
+  speakText(it.w);
+}
+
+function answerGuess(choice) {
+  const it = GUESS.items[GUESS.i];
+  if (!it || it.ok !== null) return;
+  const r = recOf(it.w, it.p, it.zh);
+  const ok = choice === it.a;
+  it.ok = ok;
+  if (ok) {
+    GUESS.right++;
+    if ((r.checks || 0) < 3) {
+      r.checks = (r.checks || 0) + 1;
+      GUESS.gained++;
+      if (r.checks === 3) GUESS.mastered++;
+    }
+    DB.progress.xp = (DB.progress.xp || 0) + 5;
+  } else {
+    r.wrong = (r.wrong || 0) + 1;
+  }
+  r.at = Date.now();
+  r.level = r.checks >= 3 ? 3 : r.checks > 0 ? 2 : 1;
+  save();
+
+  $$('#gOpts .gopt').forEach((el, k) => {
+    el.disabled = true;
+    if (k === it.a) el.classList.add('right');
+    else if (k === choice) el.classList.add('wrong');
+  });
+  const fb = $('#gFb');
+  fb.hidden = false;
+  fb.className = 'gfb ' + (ok ? 'ok' : 'no');
+  fb.innerHTML = ok
+    ? `<b>✓ 对了</b><span>${esc(it.w)} · ${esc(it.zh)}${r.checks >= 3 ? ' —— 三个勾拿满，这个词可以算初步掌握了' : ''}</span>`
+    : `<b>✗ 差一点</b><span>${esc(it.w)} 是「${esc(it.zh)}」。这次不给勾，下次读到它再试一次。</span>`;
+  $('#gChecks').innerHTML = checks3(r.checks);
+  $('#gStat').textContent = statText(r.checks);
+  $('#gSkip').hidden = true;
+  const next = $('#gNext');
+  next.hidden = false;
+  next.textContent = GUESS.i + 1 >= GUESS.items.length ? '看这一轮结果 →' : '下一个 →';
+  checkAch();
+}
+
+function renderGuessDone() {
+  const total = GUESS.items.length;
+  const pct = Math.round(GUESS.right / total * 100);
+  if (!GUESS.saved) {
+    DB.progress.guessLog.push({ date: TODAY, total, right: GUESS.right });
+    GUESS.saved = true;
+    save();
+  }
+  $('#gCount').textContent = '完成';
+  const icon = pct >= 80 ? '🎯' : pct >= 50 ? '🌱' : '📖';
+  const lead = pct >= 80
+    ? '这一轮几乎都认识。词不是背下来的，是在语境里反复认出它的。'
+    : pct >= 50
+      ? '猜对了一半多。错的那几个不是笨，只是还没在文章里见过足够多次。'
+      : '这一轮错得比较多，很正常——这些词你大多是第一次见。明天它们还会出现。';
+  $('#gCard').innerHTML = `
+    <div class="gdone">
+      <div class="gdone-ico">${icon}</div>
+      <h2>猜对 ${GUESS.right} / ${total}</h2>
+      <p class="glead">${lead}</p>
+      <div class="gsum">
+        <div><b>+${GUESS.gained}</b><span>新拿到的勾</span></div>
+        <div><b>${GUESS.mastered}</b><span>这轮新掌握</span></div>
+        <div><b>${masteredCount()}</b><span>累计掌握</span></div>
+      </div>
+      <button class="btn b" id="gToTrain">进入综合训练 →</button>
+    </div>`;
+  $('#gToTrain').onclick = () => go('train');
+  checkAch();
+}
+
+/* ---------------- 训练 ---------------- */
+function renderTrain() {
+  if (!cur) return;
+  const r = cur.reading || { q: '', opts: [], a: 0, exp: '' };
+  $('#rq').textContent = r.q;
+  $('#ropts').innerHTML = (r.opts || []).map((o, i) =>
+    `<label class="opt" data-i="${i}"><input type="radio" name="rq">${esc(o)}</label>`).join('');
+  $('#rAns').hidden = true; $('#tAns').hidden = true; $('#cAns').hidden = true;
+
+  const t = cur.translation || {};
+  $('#tq').textContent = t.en || '';
+  $('#tInput').value = DB.progress.trans || '';
+
+  const c = cur.collocation || {};
+  $('#cq').innerHTML = `用 <b style="color:#C67C2A">"${esc(c.ph || '')}"</b> 造一个句子<div style="font-size:11.5px;color:var(--sub);margin-top:5px">${esc(c.zh || '')}</div>`;
+  $('#cInput').value = DB.progress.coll || '';
+}
+$('#rSubmit').onclick = () => {
+  const sel = $('#ropts input:checked');
+  if (!sel) { toast('先选一个'); return; }
+  const i = +sel.value, a = cur.reading.a;
+  $$('#ropts .opt').forEach((el, k) => { if (k === a) el.classList.add('right'); else if (k === i) el.classList.add('wrong'); });
+  if (!cur._rDone) {
+    cur._rDone = true;
+    DB.progress.readLog.push(i === a ? 1 : 0);
+    save();
+  }
+  $('#rAns').hidden = false;
+  $('#rAns').innerHTML = `<b>${i === a ? '答对了' : '正确是 ' + String.fromCharCode(65 + a)}</b><br>${esc(cur.reading.exp || '')}`;
+};
+$('#rShow').onclick = () => {
+  const a = cur.reading.a;
+  $$('#ropts .opt').forEach((el, k) => { if (k === a) el.classList.add('right'); });
+  $('#rAns').hidden = false;
+  $('#rAns').innerHTML = `<b>答案 ${String.fromCharCode(65 + a)}</b><br>${esc(cur.reading.exp || '')}`;
+};
+$('#tInput').oninput = e => { DB.progress.trans = e.target.value; save(); };
+$('#cInput').oninput = e => { DB.progress.coll = e.target.value; save(); };
+$('#tSubmit').onclick = () => {
+  if (!$('#tInput').value.trim()) { toast('先写一句'); return; }
+  const t = cur.translation || {};
+  $('#tAns').hidden = false;
+  $('#tAns').innerHTML = `<b>参考译文</b><br>${esc(t.ref || '')}<br><br><b>句子结构</b><br>${esc(t.frame || '')}<br><br><b>常见错误</b><br>${esc(t.err || '')}`;
+};
+$('#tShow').onclick = $('#tSubmit').onclick;
+$('#cSubmit').onclick = () => {
+  if (!$('#cInput').value.trim()) { toast('先写一句'); return; }
+  const c = cur.collocation || {};
+  $('#cAns').hidden = false;
+  $('#cAns').innerHTML = `<b>示范句</b><br>${esc(c.demo || '')}<br><br><b>原文</b><br>${esc(c.ex || '')}<br><br>${esc(c.frame || '')}`;
+  checkAch();
+};
+$('#cShow').onclick = $('#cSubmit').onclick;
+
+/* ---------------- 完成 ---------------- */
+$('#toDone').onclick = () => {
+  if (!cur) return;
+  const ll = DB.progress.listenLog.slice(-cur.listening.length);
+  const acc = ll.length ? ll.reduce((a, b) => a + b, 0) / ll.length : 0;
+  const hasT = !!($('#tInput').value || '').trim();
+  const hasC = !!($('#cInput').value || '').trim();
+  const rl = DB.progress.readLog.slice(-1);
+  const rAcc = rl.length ? rl[0] : 0;
+
+  let gain = 40 + Math.round(acc * 35) + (rAcc ? 18 : 0) + (hasT ? 12 : 0) + (hasC ? 18 : 0) + Math.round(cur.len / 400 * 20);
+  const first = !cur.done;
+  if (first) cur.done = true;
+  DB.progress.xp += first ? gain : Math.round(gain * 0.3);
+  DB.progress.doneIds = DB.progress.doneIds || [];
+  if (!DB.progress.doneIds.includes(cur.id)) DB.progress.doneIds.push(cur.id);
+  bumpDay(cur.len);
+  save();
+
+  $('#d-listen').textContent = ll.length ? Math.round(acc * 100) + '%' : '—';
+  $('#d-read').textContent = rAcc ? '✓' : '—';
+  $('#d-trans').textContent = hasT ? '✓' : '—';
+  $('#d-coll').textContent = hasC ? '✓' : '—';
+  $('#xpGain').textContent = '+' + (first ? gain : Math.round(gain * 0.3)) + ' XP' + (first ? '' : '（复习）');
+  const ws = (cur.words || []).map(x => x.w);
+  const got3 = ws.filter(w => ((DB.words[w] || {}).checks || 0) >= 3);
+  $('#d-words').innerHTML = `<div class="lbl">这一篇的词</div>` +
+    (ws.length ? ws.map(w => `<span class="wtag"${got3.includes(w) ? ' style="background:#EAF6E4;color:#4B8A38"' : ''}>${esc(w)}${got3.includes(w) ? ' ✓' : ''}</span>`).join('') : '<span style="font-size:12px;color:var(--sub)">没有标注词汇</span>');
+
+  $('#doneArt').innerHTML = doneCat();
+  const L = level(DB.progress.xp);
+  $('#doneTitle').textContent = first ? '又读完一篇' : '复习完了';
+  $('#doneSub').textContent = `现在 ${L.lv} 级 · 累计 ${DB.progress.xp} XP · 读过 ${DB.articles.filter(a => a.done).length} 篇`;
+
+  go('done');
+  checkAch();
+};
+
+function doneCat() {
+  return `<svg width="78" height="68" viewBox="0 0 78 68">
+    <ellipse cx="39" cy="43" rx="22" ry="18" fill="#F5DFC4"/>
+    <path d="M19 31 L20 13 L31 23 Z" fill="#F5DFC4" stroke="#E8CBA6" stroke-width="1.2" stroke-linejoin="round"/>
+    <path d="M59 31 L58 13 L47 23 Z" fill="#F5DFC4" stroke="#E8CBA6" stroke-width="1.2" stroke-linejoin="round"/>
+    <path d="M21 14 L22 22 L28 21 Z" fill="#F0B9B0"/><path d="M57 14 L56 22 L50 21 Z" fill="#F0B9B0"/>
+    <path d="M30 39 q3.5 3 7 0" stroke="#8A6A4B" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <path d="M41 39 q3.5 3 7 0" stroke="#8A6A4B" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <path d="M37 45 q2 2.4 4 0" stroke="#C99180" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+    <ellipse cx="25" cy="46" rx="4.5" ry="3" fill="#F7C3BC" opacity=".6"/>
+    <ellipse cx="53" cy="46" rx="4.5" ry="3" fill="#F7C3BC" opacity=".6"/>
+    <path d="M57 47 q10-4 14 2" stroke="#F5DFC4" stroke-width="7" fill="none" stroke-linecap="round"/>
+    <path d="M65 21l2.2 6 6 1.6-6 1.8-2.2 6-2.2-6-6-1.8 6-1.6z" fill="#F2C14E"/>
+  </svg>`;
+}
+
+/* ---------------- 成就 ---------------- */
+function checkAch() {
+  const s = { articles: DB.articles, words: DB.words, progress: DB.progress };
+  ACHIEVEMENTS.forEach(a => {
+    if (DB.progress.achievements[a.id]) return;
+    let ok = false;
+    try { ok = a.test(s); } catch (e) { }
+    if (ok) {
+      DB.progress.achievements[a.id] = Date.now();
+      save();
+      popAch(a);
+    }
+  });
+}
+function popAch(a) {
+  const p = $('#achPop');
+  p.innerHTML = `<div class="ai">${a.icon}</div><div><b>解锁：${a.name}</b><span>${a.desc}</span></div>`;
+  p.hidden = false;
+  clearTimeout(p._t);
+  p._t = setTimeout(() => { p.hidden = true; }, 3600);
+}
+
+/* ---------------- 文库 ---------------- */
+function renderLibrary() {
+  const list = DB.articles;
+  if (!list.length) {
+    $('#libBody').innerHTML = `<div class="simple"><h2>文库还是空的</h2><p class="lead">在「今日」页生成第一篇文章，它就会存在这里。</p></div>`;
+    return;
+  }
+  $('#libBody').innerHTML = `<div class="simple">
+    <h2>读过和没读过的</h2><p class="lead">共 ${list.length} 篇 · 已完成 ${list.filter(a => a.done).length} 篇</p>
+    <div class="libgrid">
+      ${list.map(a => `<div class="libcard" data-id="${a.id}">
+        <b>${esc(a.title)}${a.done ? '<span class="done">已完成</span>' : ''}</b>
+        <div class="m">${esc(a.date)} · ${esc(a.topic || '')} · ${a.len} 词</div>
+      </div>`).join('')}
+    </div></div>`;
+  $$('#libBody .libcard').forEach(el => el.onclick = () => {
+    const a = DB.articles.find(x => x.id === el.dataset.id);
+    if (a) openArticle(a);
+  });
+}
+
+
+let BOOK = { tab: 'cet6', filter: 'all', q: '' };
+
+function statusKey(w) {
+  const r = DB.words[w];
+  if (!r) return 'none';
+  const c = r.checks || 0;
+  if (c >= 3) return 'mastered';
+  if (c > 0) return 'learning';
+  return 'seen';
+}
+
+function renderWords() {
+  const pool = bookPool();
+  const total = pool.length;
+  const m = masteredCount();
+  const learning = Object.values(DB.words).filter(w => { const c = w.checks || 0; return c > 0 && c < 3; }).length;
+  const touched = Object.keys(DB.words).length;
+  const pct = total ? Math.round(m / total * 100) : 0;
+
+  const head = `
+    <div class="simple book-head">
+      <div class="bh-top">
+        <div>
+          <h2>词书</h2>
+          <p class="lead" style="margin-bottom:0">三个勾算初步掌握。勾只在「猜词」里猜对时给，猜错不给。</p>
+        </div>
+        <button class="btn sm" id="bookImport">导入我的词表</button>
+      </div>
+      <div class="bh-stats">
+        <div><b>${total}</b><span>词书总量</span></div>
+        <div><b style="color:#5BA545">${m}</b><span>已初步掌握</span></div>
+        <div><b style="color:#E9A23B">${learning}</b><span>学习中</span></div>
+        <div><b>${touched}</b><span>遇到过的词</span></div>
+      </div>
+      <div class="bh-bar"><i style="width:${pct}%"></i></div>
+      <div class="bh-note">已掌握 ${pct}%${(DB.books && DB.books.length) ? ' · 另有 ' + DB.books.length + ' 本导入词书' : ''}</div>
+    </div>`;
+
+  const tabs = `
+    <div class="book-tabs">
+      <b class="${BOOK.tab === 'cet6' ? 'on' : ''}" data-t="cet6">六级核心 ${CET6_WORDS.length}</b>
+      <b class="${BOOK.tab === 'mine' ? 'on' : ''}" data-t="mine">我遇到过的 ${touched}</b>
+    </div>`;
+
+  if (BOOK.tab === 'mine') {
+    const list = Object.entries(DB.words).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+    $('#wordsBody').innerHTML = head + tabs + (list.length ? `
+      <div class="simple">
+        <div class="wgrid">
+          ${list.map(([w, v]) => `
+            <div class="bcell st-${statusKey(w)}" data-w="${esc(w)}">
+              <div class="bw">${esc(w)}</div>
+              <div class="bz">${esc(v.p || '')} ${esc(v.zh || '')}</div>
+              <div class="bc">${checks3(v.checks || 0)}</div>
+            </div>`).join('')}
+        </div>
+      </div>` : `<div class="simple"><p class="lead" style="margin:0">还没有遇到过的词。读一篇文章，点一下橙色的词就会进来。</p></div>`);
+  } else {
+    const filters = [['all', '全部'], ['none', '未开始'], ['learning', '学习中'], ['mastered', '已掌握']];
+    const list = pool.filter(x => {
+      if (BOOK.q && !x.w.includes(BOOK.q.toLowerCase()) && !String(x.zh).includes(BOOK.q)) return false;
+      if (BOOK.filter === 'all') return true;
+      const st = statusKey(x.w);
+      if (BOOK.filter === 'none') return st === 'none' || st === 'seen';
+      return st === BOOK.filter;
+    });
+    $('#wordsBody').innerHTML = head + tabs + `
+      <div class="simple">
+        <div class="book-tools">
+          <input class="book-q" id="bookQ" placeholder="搜索单词或释义…" value="${esc(BOOK.q)}">
+          <div class="book-filters">
+            ${filters.map(([k, n]) => `<b data-f="${k}" class="${BOOK.filter === k ? 'on' : ''}">${n}</b>`).join('')}
+          </div>
+        </div>
+        <div class="book-count">${list.length} 个</div>
+        <div class="wgrid">
+          ${list.map(x => `
+            <div class="bcell st-${statusKey(x.w)}" data-w="${esc(x.w)}">
+              <div class="bw">${esc(x.w)}</div>
+              <div class="bz">${esc(x.p || '')} ${esc(x.zh || '')}</div>
+              <div class="bc">${checks3((DB.words[x.w] || {}).checks || 0)}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  $$('#wordsBody .book-tabs b').forEach(el => el.onclick = () => { BOOK.tab = el.dataset.t; renderWords(); });
+  $$('#wordsBody .book-filters b').forEach(el => el.onclick = () => { BOOK.filter = el.dataset.f; renderWords(); });
+  $$('#wordsBody .bcell').forEach(el => el.onclick = () => { speakText(el.dataset.w); });
+  const q = $('#bookQ');
+  if (q) {
+    q.oninput = e => {
+      BOOK.q = e.target.value;
+      const pos = e.target.selectionStart;
+      renderWords();
+      const nq = $('#bookQ');
+      if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); }
+    };
+  }
+  const imp = $('#bookImport');
+  if (imp) imp.onclick = () => $('#bookFile').click();
+}
+
+/* 导入 CSV / TXT：每行 单词[,词性][,释义]，分隔符支持逗号、制表符、全角逗号 */
+function importBook(text, name) {
+  const rows = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const words = [];
+  rows.forEach(line => {
+    const parts = line.split(/\t|,|，|;|\s{2,}/).map(x => x.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const w = (parts[0] || '').toLowerCase();
+    if (!/^[a-z][a-z'-]*$/.test(w)) return;
+    let p = '', zh = '';
+    parts.slice(1).forEach(x => {
+      if (/^(n|v|vt|vi|adj|adv|prep|conj|pron|num|art|aux|int)\.?$/i.test(x)) p = x.replace(/\.?$/, '.');
+      else if (!zh) zh = x;
+    });
+    if (!zh) return;
+    words.push({ w, p, zh });
+  });
+  if (!words.length) { toast('没读到有效词条，格式：word,pos,释义'); return; }
+  DB.books = DB.books || [];
+  DB.books.push({ id: 'b' + Date.now(), name: name || '导入词书', words });
+  save();
+  BOOK.tab = 'cet6';
+  renderWords();
+  toast('导入 ' + words.length + ' 个词');
+}
+
+/* ---------------- 成长 ---------------- */
+function renderGrowth() {
+  const L = level(DB.progress.xp);
+  const l = DB.progress.listenLog, r = DB.progress.readLog;
+  const acc = l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length * 100) : 0;
+  const rAcc = r.length ? Math.round(r.reduce((a, b) => a + b, 0) / r.length * 100) : 0;
+  const doneN = DB.articles.filter(a => a.done).length;
+  const totalWords = DB.articles.filter(a => a.done).reduce((s, a) => s + a.len, 0);
+  const days = Object.keys(DB.progress.days).length;
+
+  $('#growthBody').innerHTML = `
+    <div class="simple" style="margin-bottom:14px">
+      <h2>现在的你</h2><p class="lead">没有连续打卡，没有断签惩罚。这里只记录你实际做了什么。</p>
+      <div class="mini-stats" style="padding:6px 0 18px">
+        <div><b style="font-size:26px">Lv.${L.lv}</b><span>等级</span></div>
+        <div><b style="font-size:26px">${doneN}</b><span>读过的篇数</span></div>
+        <div><b style="font-size:26px">${totalWords}</b><span>读过的词数</span></div>
+        <div><b style="font-size:26px">${days}</b><span>学习过的天数</span></div>
+      </div>
+      <div class="row"><span class="lab">距离下一级</span><span class="val">${L.need - L.cur} XP</span></div>
+      <div class="row"><span class="lab">听力正确率</span><span class="val">${l.length ? acc + '%' : '还没做过题'}</span></div>
+      <div class="row"><span class="lab">阅读题正确率</span><span class="val">${r.length ? rAcc + '%' : '还没做过题'}</span></div>
+      <div class="row"><span class="lab">遇到过的词</span><span class="val">${Object.keys(DB.words).length} 个</span></div>
+      <div class="row"><span class="lab">已初步掌握（三个勾）</span><span class="val" style="color:#5BA545;font-weight:600">${masteredCount()} 个</span></div>
+      <div class="row"><span class="lab">学习中（有一到两个勾）</span><span class="val">${Object.values(DB.words).filter(w => { const c = w.checks || 0; return c > 0 && c < 3; }).length} 个</span></div>
+      <div class="row"><span class="lab">猜词正确率</span><span class="val">${DB.progress.guessLog.length ? Math.round(DB.progress.guessLog.reduce((a, b) => a + b.right, 0) / Math.max(1, DB.progress.guessLog.reduce((a, b) => a + b.total, 0)) * 100) + '%' : '还没猜过'}</span></div>
+      <div class="row"><span class="lab">写过翻译 / 造句</span><span class="val">${DB.progress.trans ? '有' : '还没有'} / ${DB.progress.coll ? '有' : '还没有'}</span></div>
+    </div>
+    <div class="simple">
+      <h2>成就</h2><p class="lead">解锁了 ${Object.keys(DB.progress.achievements).length} / ${ACHIEVEMENTS.length}</p>
+      <div class="ach-grid">
+        ${ACHIEVEMENTS.map(a => `<div class="ach ${DB.progress.achievements[a.id] ? '' : 'off'}">
+          <div class="ai">${a.icon}</div><b>${a.name}</b><span>${a.desc}</span></div>`).join('')}
+      </div>
+    </div>`;
+}
+
+/* ---------------- 设置 ---------------- */
+function renderSettings() {
+  const c = DB.config;
+  const p = PROVIDERS[c.provider] || PROVIDERS.zhipu;
+  $('#settingsBody').innerHTML = `
+    <div class="simple" style="margin-bottom:14px">
+      <h2>AI 接口</h2>
+      <p class="lead">推荐智谱 GLM-4-Flash：国内直连、永久免费、不用绑卡。</p>
+
+      <div class="field">
+        <label>服务商</label>
+        <select class="sel" id="setProvider" style="width:100%;padding:9px 12px">
+          ${Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}" ${c.provider === k ? 'selected' : ''}>${v.name}</option>`).join('')}
+        </select>
+        <div class="tip">${p.note}</div>
+      </div>
+
+      <div class="field">
+        <label>API Key</label>
+        <input type="password" id="setKey" placeholder="粘贴你的 API Key" value="${esc(c.apiKey)}">
+        <div class="tip">免费获取：<a href="#" id="getKey" style="color:#4A7BF7">打开 bigmodel.cn 注册，新建 API Key</a>，整个过程两分钟，不用绑卡。</div>
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <label>接口地址</label>
+          <input type="text" id="setBase" value="${esc(c.baseUrl)}">
+        </div>
+        <div class="field">
+          <label>模型名</label>
+          <input type="text" id="setModel" value="${esc(c.model)}">
+        </div>
+      </div>
+
+      <div class="acts">
+        <button class="btn b" id="saveCfg">保存</button>
+        <button class="btn" id="testCfg">测试连接</button>
+        <span class="gen-hint" id="testMsg"></span>
+      </div>
+    </div>
+
+    <div class="simple" style="margin-bottom:14px">
+      <h2>兴趣</h2>
+      <p class="lead">AI 会从这里选题。点一下切换，可以多选。</p>
+      <div class="topic-row" id="interestRow">
+        ${['金融与商业', '科技', '艺术', '文学', '历史', '科学', '心理', '社会'].map(t =>
+    `<div class="topic ${c.interests.includes(t) ? 'on' : ''}" data-t="${t}">${t}</div>`).join('')}
+      </div>
+    </div>
+
+    <div class="simple">
+      <h2>声音</h2>
+      <p class="lead">使用微软 Edge 在线语音，无需安装、无需 Key，音质接近真人。第一次播放某一句时会现合成，之后走缓存。</p>
+      <div class="field">
+        <label>音色</label>
+        <select class="sel" id="setVoice" style="width:100%;padding:9px 12px">
+          ${VOICES.map(v => `<option value="${v.id}" ${curVoice() === v.id ? 'selected' : ''}>${v.name}</option>`).join('')}
+        </select>
+        <div class="tip">英式发音适合雅思，美式发音适合托福和六级。</div>
+      </div>
+      <div class="row"><span class="lab">数据目录</span><span class="val" id="dataDir">—</span></div>
+    </div>`;
+
+  $('#setProvider').onchange = e => {
+    const k = e.target.value, pr = PROVIDERS[k];
+    $('#setBase').value = pr.baseUrl;
+    $('#setModel').value = pr.model;
+    c.provider = k;
+  };
+  $('#saveCfg').onclick = () => {
+    c.apiKey = $('#setKey').value.trim();
+    c.baseUrl = $('#setBase').value.trim();
+    c.model = $('#setModel').value.trim();
+    save(); toast('已保存');
+    $('#greetSub').textContent = c.apiKey ? '读一小段你真正感兴趣的东西，就够了。' : $('#greetSub').textContent;
+    renderHome();
+  };
+  $('#testCfg').onclick = async () => {
+    const msg = $('#testMsg');
+    msg.textContent = '测试中…';
+    c.apiKey = $('#setKey').value.trim();
+    c.baseUrl = $('#setBase').value.trim();
+    c.model = $('#setModel').value.trim();
+    const res = await window.studio.chat({
+      baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model, maxTokens: 20,
+      messages: [{ role: 'user', content: '只回复两个字：可以' }]
+    });
+    msg.textContent = res.ok ? '连通了 · ' + (res.ms / 1000).toFixed(1) + 's' : '失败：' + res.error;
+    if (res.ok) { save(); renderHome(); }
+  };
+  $('#setVoice').onchange = e => { DB.config.voice = e.target.value; save(); toast('音色已切换'); };
+  $('#getKey').onclick = e => { e.preventDefault(); window.studio.openExternal('https://open.bigmodel.cn/usercenter/apikeys'); };
+  $$('#interestRow .topic').forEach(el => el.onclick = () => {
+    const t = el.dataset.t;
+    const i = c.interests.indexOf(t);
+    if (i >= 0) c.interests.splice(i, 1); else c.interests.push(t);
+    el.classList.toggle('on');
+    save();
+  });
+  window.studio.dataDir().then(d => { const el = $('#dataDir'); if (el) el.textContent = d; });
+}
+
+/* ---------------- 小工具 ---------------- */
+function toast(m) {
+  const t = $('#toast');
+  t.textContent = m; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1800);
+}
+$('#genCancel').onclick = () => { $('#genOverlay').hidden = true; $('#genFill').style.width = '0'; };
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space' && !$('#v-listen').hidden) { e.preventDefault(); $('#playBtn').click(); }
+});
+
+boot();

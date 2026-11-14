@@ -1,0 +1,41 @@
+{
+  "name": "cet6-studio",
+  "version": "1.0.0",
+  "description": "Studio - AI English reading trainer (Electron desktop app)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --win --dir",
+    "icon": "electron tools/make-icon.js"
+  },
+  "devDependencies": {
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "msedge-tts": "^2.1.1"
+  },
+  "build": {
+    "appId": "com.studio.english",
+    "productName": "Studio English",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "app.js",
+      "words.js",
+      "styles.css",
+      "build/icon.ico",
+      "node_modules/msedge-tts/**/*"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "dir"
+      ]
+    }
+  }
+}

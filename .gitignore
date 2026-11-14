@@ -1,0 +1,8 @@
+node_modules/
+release/
+*.log
+.chrometmp/
+shot-*.png
+_shot.js
+_test.js
+.DS_Store
