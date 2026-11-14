@@ -259,18 +259,18 @@ function renderSpark() {
   const last = pts[pts.length - 1];
   $('#sparkline').innerHTML = `
     <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#4A7BF7" stop-opacity=".16"/><stop offset="1" stop-color="#4A7BF7" stop-opacity="0"/>
+      <stop offset="0" stop-color="#A8823F" stop-opacity=".16"/><stop offset="1" stop-color="#A8823F" stop-opacity="0"/>
     </linearGradient></defs>
     <path d="${area}" fill="url(#sg)"/>
-    <path d="${line}" fill="none" stroke="#4A7BF7" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3" fill="#4A7BF7"/>`;
+    <path d="${line}" fill="none" stroke="#A8823F" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3" fill="#A8823F"/>`;
 }
 
 function renderCollectionPreview() {
   const ws = Object.entries(DB.words).slice(-14);
   if (!ws.length) {
-    $('#collectionPreview').innerHTML = '<div class="chips">' +
-      Array.from({ length: 9 }, () => '<span class="chip ghost">· · ·</span>').join('') + '</div>';
+    $('#collectionPreview').innerHTML =
+      '<div class="coll-empty">还没有收集到词。读文章时点一下橙色的词，它就会留在这里。</div>';
     return;
   }
   $('#collectionPreview').innerHTML = '<div class="chips">' + ws.map(([w, v]) =>
@@ -285,8 +285,8 @@ function renderCollFoot() {
   const learning = Object.values(DB.words).filter(w => { const c = w.checks || 0; return c > 0 && c < 3; }).length;
   const total = bookPool().length;
   foot.innerHTML = `
-    <div class="cfs">已初步掌握 <b style="color:#5BA545">${m}</b> 个</div>
-    <div class="cfs">学习中 <b style="color:#E9A23B">${learning}</b> 个</div>
+    <div class="cfs">已初步掌握 <b style="color:#5E7A55">${m}</b> 个</div>
+    <div class="cfs">学习中 <b style="color:#A8823F">${learning}</b> 个</div>
     <div class="cfs" style="margin-left:auto">词书共 <b>${total}</b> 个词</div>`;
 }
 
@@ -885,7 +885,7 @@ function startGuess() {
       for (const f of fb) { if (dist.length < 3 && !used.has(f)) { used.add(f); dist.push(f); } }
     }
     const opts = [zh, ...dist].sort(() => Math.random() - 0.5);
-    return { w: x.w, p: x.p || r.p || '', zh, opts, a: opts.indexOf(zh), ok: null };
+    return { w: x.w, p: x.p || r.p || '', ph: phOf(x.w), zh, opts, a: opts.indexOf(zh), ok: null };
   }).filter(it => it.zh && it.opts.length === 4);
 
   if (items.length > 10) {
@@ -920,7 +920,7 @@ function renderGuess() {
   card.innerHTML = `
     <div class="gdots">${dots}</div>
     <div class="gword" id="gWord">${esc(it.w)}</div>
-    <div class="gpos">${esc(it.p || ' ')}</div>
+    <div class="gpos">${esc(it.ph || '')}${it.ph && it.p ? ' · ' : ''}${esc(it.p || '')}</div>
     <div class="gask">它最接近哪个意思？</div>
     <div class="gopts" id="gOpts">
       ${it.opts.map((o, i) => `<button class="gopt" data-i="${i}"><i>${'ABCD'[i]}</i><span>${esc(o)}</span></button>`).join('')}
@@ -1218,8 +1218,8 @@ function renderWords() {
       </div>
       <div class="bh-stats">
         <div><b>${total}</b><span>词书总量</span></div>
-        <div><b style="color:#5BA545">${m}</b><span>已初步掌握</span></div>
-        <div><b style="color:#E9A23B">${learning}</b><span>学习中</span></div>
+        <div><b style="color:#5E7A55">${m}</b><span>已初步掌握</span></div>
+        <div><b style="color:#A8823F">${learning}</b><span>学习中</span></div>
         <div><b>${touched}</b><span>遇到过的词</span></div>
       </div>
       <div class="bh-bar"><i style="width:${pct}%"></i></div>
@@ -1342,7 +1342,7 @@ function renderGrowth() {
       <div class="row"><span class="lab">听力正确率</span><span class="val">${l.length ? acc + '%' : '还没做过题'}</span></div>
       <div class="row"><span class="lab">阅读题正确率</span><span class="val">${r.length ? rAcc + '%' : '还没做过题'}</span></div>
       <div class="row"><span class="lab">遇到过的词</span><span class="val">${Object.keys(DB.words).length} 个</span></div>
-      <div class="row"><span class="lab">已初步掌握（三个勾）</span><span class="val" style="color:#5BA545;font-weight:600">${masteredCount()} 个</span></div>
+      <div class="row"><span class="lab">已初步掌握（三个勾）</span><span class="val" style="color:#5E7A55;font-weight:600">${masteredCount()} 个</span></div>
       <div class="row"><span class="lab">学习中（有一到两个勾）</span><span class="val">${Object.values(DB.words).filter(w => { const c = w.checks || 0; return c > 0 && c < 3; }).length} 个</span></div>
       <div class="row"><span class="lab">猜词正确率</span><span class="val">${DB.progress.guessLog.length ? Math.round(DB.progress.guessLog.reduce((a, b) => a + b.right, 0) / Math.max(1, DB.progress.guessLog.reduce((a, b) => a + b.total, 0)) * 100) + '%' : '还没猜过'}</span></div>
       <div class="row"><span class="lab">写过翻译 / 造句</span><span class="val">${DB.progress.trans ? '有' : '还没有'} / ${DB.progress.coll ? '有' : '还没有'}</span></div>
@@ -1376,7 +1376,7 @@ function renderSettings() {
       <div class="field">
         <label>API Key</label>
         <input type="password" id="setKey" placeholder="粘贴你的 API Key" value="${esc(c.apiKey)}">
-        <div class="tip">免费获取：<a href="#" id="getKey" style="color:#4A7BF7">打开 bigmodel.cn 注册，新建 API Key</a>，整个过程两分钟，不用绑卡。</div>
+        <div class="tip">免费获取：<a href="#" id="getKey" style="color:#A8823F">打开 bigmodel.cn 注册，新建 API Key</a>，整个过程两分钟，不用绑卡。</div>
       </div>
 
       <div class="grid2">

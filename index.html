@@ -45,7 +45,7 @@
   <div class="hero">
     <div class="hero-art">
       <svg viewBox="0 0 400 220" preserveAspectRatio="xMaxYMax meet">
-        <g opacity=".55" fill="#DBD0BA">
+        <g opacity=".72" fill="#DCD0B7">
           <rect x="232" y="112" width="14" height="80"/>
           <path d="M239 78 q14 0 14 16 l0 18 h-28 l0-18 q0-16 14-16z"/>
           <rect x="236" y="70" width="6" height="12"/>
@@ -82,6 +82,7 @@
         </g>
       </svg>
     </div>
+    <div class="eyebrow">每日一篇 · DAILY READING</div>
     <h1 id="greet">今天也为自己留一点时间吧</h1>
     <p id="greetSub">读一小段你真正感兴趣的东西，就够了。</p>
     <div class="hero-xp">
@@ -99,7 +100,7 @@
   <div class="home-grid">
     <div class="card today-card" id="todayCard">
       <div class="card-h">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#E9A23B" stroke-width="1.6" stroke-linecap="round"><path d="M12 3l2.2 6.2L21 11l-6.8 1.8L12 19l-2.2-6.2L3 11l6.8-1.8z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="#A8823F" stroke-width="1.6" stroke-linecap="round"><path d="M12 3l2.2 6.2L21 11l-6.8 1.8L12 19l-2.2-6.2L3 11l6.8-1.8z"/></svg>
         今天的文章
         <span class="tag-live" id="todayTag">还没生成</span>
       </div>
@@ -108,13 +109,13 @@
 
     <div class="card growth-card">
       <div class="card-h">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#4A7BF7" stroke-width="1.6" stroke-linecap="round"><path d="M4 19V9M10 19V5M16 19v-6M22 19H2"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="#A8823F" stroke-width="1.6" stroke-linecap="round"><path d="M4 19V9M10 19V5M16 19v-6M22 19H2"/></svg>
         你的成长
       </div>
       <div class="mini-stats">
         <div><b id="msArticles">0</b><span>读过的文章</span></div>
         <div><b id="msWords">0</b><span>遇到过的词</span></div>
-        <div><b id="msMastered" style="color:#5BA545">0</b><span>已初步掌握</span></div>
+        <div><b id="msMastered" style="color:#5E7A55">0</b><span>已初步掌握</span></div>
       </div>
       <div class="spark-wrap">
         <div class="spark-title">最近 14 天·每天读到的词</div>
@@ -138,7 +139,7 @@
 <section id="v-listen" hidden>
   <div class="bar">
     <button class="back" data-go="home">← 返回</button>
-    <h2><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4A7BF7" stroke-width="1.8" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2" y="14" width="4" height="6" rx="2"/><rect x="18" y="14" width="4" height="6" rx="2"/></svg>先听</h2>
+    <h2><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A8823F" stroke-width="1.8" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2" y="14" width="4" height="6" rx="2"/><rect x="18" y="14" width="4" height="6" rx="2"/></svg>先听</h2>
     <div class="steps"><i class="on"></i><i></i><i></i></div>
   </div>
   <div class="listen-grid">
@@ -199,7 +200,7 @@
 
     <div class="card">
       <div class="card-h" style="margin-bottom:10px">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#7FB069" stroke-width="1.7" stroke-linecap="round"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M17 8h4M19 6v4"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="#5E7A55" stroke-width="1.7" stroke-linecap="round"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M17 8h4M19 6v4"/></svg>
         听力小题
         <span class="hint-r" id="qProg">1 / 2</span>
       </div>
@@ -265,12 +266,12 @@
 <section id="v-train" hidden>
   <div class="bar">
     <button class="back" data-go="guess">← 返回猜词</button>
-    <h2><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#E9A23B" stroke-width="1.8" stroke-linecap="round"><path d="M8 4h8v4a4 4 0 0 1-8 0z"/><path d="M12 12v4M8 20h8"/></svg>综合训练</h2>
+    <h2><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A8823F" stroke-width="1.8" stroke-linecap="round"><path d="M8 4h8v4a4 4 0 0 1-8 0z"/><path d="M12 12v4M8 20h8"/></svg>综合训练</h2>
     <div class="steps"><i class="on"></i><i class="on"></i><i class="on"></i></div>
   </div>
   <div class="train-grid">
     <div class="tcard">
-      <div class="th"><span class="num" style="background:#4A7BF7">1</span>阅读理解</div>
+      <div class="th"><span class="num" style="background:#A8823F">1</span>阅读理解</div>
       <div class="tbody">
         <div class="stem" id="rq"></div>
         <div id="ropts"></div>
@@ -282,7 +283,7 @@
       <div class="answer" id="rAns" hidden></div>
     </div>
     <div class="tcard">
-      <div class="th"><span class="num" style="background:#7FB069">2</span>长难句翻译</div>
+      <div class="th"><span class="num" style="background:#5E7A55">2</span>长难句翻译</div>
       <div class="tbody">
         <div class="stem" id="tq"></div>
         <textarea id="tInput" placeholder="写下你的翻译…"></textarea>
@@ -294,7 +295,7 @@
       <div class="answer" id="tAns" hidden></div>
     </div>
     <div class="tcard">
-      <div class="th"><span class="num" style="background:#E9A23B">3</span>搭配造句</div>
+      <div class="th"><span class="num" style="background:#A8823F">3</span>搭配造句</div>
       <div class="tbody">
         <div class="stem" id="cq"></div>
         <textarea id="cInput" placeholder="用这个搭配写一句你自己的话…"></textarea>
