@@ -1,11 +1,35 @@
-// 用 Electron 把 SVG 光栅化成多尺寸 PNG，再打包成 Windows .ico
-const { app, BrowserWindow } = require('electron');
+// 用 Electron 把 SVG 光栅化成多尺寸，再打包成标准 Windows .ico（BMP/DIB 条目，非 PNG-in-ICO）
+// 注意：Chromium 加载 PNG 压缩的 ico 条目会直接崩溃，所以这里手动写 BITMAPINFOHEADER。
+const { app, BrowserWindow, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 const ROOT = path.join(__dirname, '..');
 const SVG = path.join(ROOT, 'build', 'icon.svg');
 const OUT = path.join(ROOT, 'build');
+
+function dibFromBitmap(bgra, size) {
+  const header = Buffer.alloc(40);
+  header.writeUInt32LE(40, 0);
+  header.writeInt32LE(size, 4);
+  header.writeInt32LE(size * 2, 8);   // XOR + AND 两段
+  header.writeUInt16LE(1, 12);
+  header.writeUInt16LE(32, 14);
+  header.writeUInt32LE(0, 16);        // BI_RGB
+  header.writeUInt32LE(size * size * 4, 20);
+
+  // toBitmap 返回 BGRA、行序自上而下；DIB 要求自下而上
+  const px = Buffer.alloc(size * size * 4);
+  const rowBytes = size * 4;
+  for (let y = 0; y < size; y++) {
+    bgra.copy(px, y * rowBytes, (size - 1 - y) * rowBytes, (size - y) * rowBytes);
+  }
+
+  const maskRow = Math.ceil(size / 32) * 4;      // 1bpp，按 4 字节对齐
+  const mask = Buffer.alloc(maskRow * size, 0);  // 全 0 = 全部不透明
+
+  return Buffer.concat([header, px, mask]);
+}
 
 function writeIco(entries, file) {
   const n = entries.length;
@@ -17,8 +41,9 @@ function writeIco(entries, file) {
   let offset = 6 + 16 * n;
   entries.forEach((e, i) => {
     const b = 16 * i;
-    dir.writeUInt8(e.size >= 256 ? 0 : e.size, b);
-    dir.writeUInt8(e.size >= 256 ? 0 : e.size, b + 1);
+    const dim = e.size >= 256 ? 0 : e.size;
+    dir.writeUInt8(dim, b);
+    dir.writeUInt8(dim, b + 1);
     dir.writeUInt8(0, b + 2);
     dir.writeUInt8(0, b + 3);
     dir.writeUInt16LE(1, b + 4);
@@ -41,26 +66,28 @@ app.whenReady().then(async () => {
 
   const win = new BrowserWindow({
     width: 512, height: 512, show: true, frame: false, transparent: true,
-    resizable: false, skipTaskbar: true, hasShadow: false,
-    webPreferences: { offscreen: false }
+    resizable: false, skipTaskbar: true, hasShadow: false
   });
   await win.loadFile(tmp);
-  await new Promise(r => setTimeout(r, 700));
-  const img = await win.webContents.capturePage();
-  const base = path.join(OUT, 'icon-512.png');
-  fs.writeFileSync(base, img.toPNG());
-  console.log('base', img.getSize().width + 'x' + img.getSize().height);
+  await new Promise(r => setTimeout(r, 800));
+  const shot = path.join(OUT, 'icon-512.png');
+  fs.writeFileSync(shot, (await win.webContents.capturePage()).toPNG());
+  win.destroy();
 
-  const nativeImage = require('electron').nativeImage;
+  const base = nativeImage.createFromBuffer(fs.readFileSync(shot));
   const entries = [];
   for (const size of [16, 24, 32, 48, 64, 128, 256]) {
-    const scaled = nativeImage.createFromBuffer(fs.readFileSync(base)).resize({ width: size, height: size, quality: 'best' });
-    const buf = scaled.toPNG();
-    fs.writeFileSync(path.join(OUT, 'icon-' + size + '.png'), buf);
-    entries.push({ size, buf });
+    const scaled = base.resize({ width: size, height: size, quality: 'best' });
+    const bmp = scaled.toBitmap();          // BGRA
+    if (bmp.length !== size * size * 4) {
+      console.log('skip', size, 'unexpected bitmap length', bmp.length);
+      continue;
+    }
+    fs.writeFileSync(path.join(OUT, 'icon-' + size + '.png'), scaled.toPNG());
+    entries.push({ size, buf: dibFromBitmap(bmp, size) });
   }
   writeIco(entries, path.join(OUT, 'icon.ico'));
   fs.unlinkSync(tmp);
-  console.log('ico written', fs.statSync(path.join(OUT, 'icon.ico')).size, 'bytes');
+  console.log('ico ok:', entries.map(e => e.size).join(','), fs.statSync(path.join(OUT, 'icon.ico')).size, 'bytes');
   app.quit();
 });

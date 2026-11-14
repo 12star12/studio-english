@@ -352,7 +352,9 @@ function buildPrompt() {
   const c = DB.config;
   const len = c.length;
   const topic = c.topic === 'auto' ? '你自己挑一个最适合今天读的方向' : c.topic;
-  const words = pickWords(7);
+  // 目标词数量跟着篇幅走：短篇塞 7 个词会把句子挤变形，难度反而下降
+  const nWords = len <= 180 ? 4 : len <= 320 ? 6 : 8;
+  const words = pickWords(nWords);
   const minW = Math.round(len * 0.88), maxW = Math.round(len * 1.12);
   return {
     words, minW, maxW,
@@ -376,7 +378,7 @@ function buildPrompt() {
 写完数一遍总词数，不足 ${minW} 就补一个具体例子或一层解释进去。
 
 难度：六级水平，但必须自然好读，不能为了难而难。
-必须自然用到这 7 个词中的至少 5 个：${words.join(', ')}
+必须自然用到这 ${nWords} 个词中的至少 ${nWords - 1} 个：${words.join(', ')}
 
 写作要求：
 - 要有真实的信息价值或文学性。不要写"随着社会发展"这种空洞开头。
@@ -398,7 +400,7 @@ function buildPrompt() {
   "collocation": {"ph": "一个值得积累的搭配", "zh": "中文含义", "ex": "原文中的例句", "demo": "一个新的示范句", "frame": "用法要点和常见错误"}
 }
 
-words 给 6–8 个，必须是正文里真实出现的词。listening 必须 2 道题。a 是正确选项的下标（0–3）。所有 opts 必须 4 项，且以 "A. " "B. " "C. " "D. " 开头。`
+words 给 ${nWords} 个，必须是正文里真实出现的词。listening 必须 2 道题。a 是正确选项的下标（0–3）。所有 opts 必须 4 项，且以 "A. " "B. " "C. " "D. " 开头。`
       }
     ]
   };
