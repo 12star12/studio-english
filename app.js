@@ -314,17 +314,35 @@ function artThumb(topic) {
 }
 
 /* ---------------- 生成 ---------------- */
-/* 词书池：内置六级词 + 用户导入词书，去重 */
+/* 释义来源优先级：用户导入的词书 > 手写释义表 > 读文章时补进来的释义 */
+function glossOf(w) {
+  const r = DB.words[w];
+  if (r && r.zh) return r.zh;
+  if (typeof CET6_GLOSS !== 'undefined' && CET6_GLOSS[w]) return CET6_GLOSS[w];
+  return '';
+}
+function phOf(w) {
+  const r = DB.words[w];
+  if (r && r.ph) return r.ph;
+  if (typeof CET6_WORDS !== 'undefined') {
+    const hit = CET6_WORDS.find(x => x[0] === w);
+    if (hit && hit[1]) return hit[1];
+  }
+  return '';
+}
+
+/* 词书池：docx 词表（7779）+ 用户导入词书，去重 */
 function bookPool() {
   const seen = new Set(), out = [];
-  const push = (w, p, zh) => {
+  const push = (w, ph, zh) => {
     const k = String(w || '').toLowerCase().trim();
     if (!k || seen.has(k) || !/^[a-z][a-z'-]*$/.test(k)) return;
     seen.add(k);
-    out.push({ w: k, p: p || '', zh: zh || '' });
+    out.push({ w: k, ph: ph || '', zh: zh || '' });
   };
-  (typeof CET6_WORDS !== 'undefined' ? CET6_WORDS : []).forEach(([w, p, zh]) => push(w, p, zh));
-  (DB.books || []).forEach(b => (b.words || []).forEach(x => push(x.w, x.p, x.zh)));
+  (typeof CET6_WORDS !== 'undefined' ? CET6_WORDS : []).forEach(x => push(x[0], x[1], x[2]));
+  (DB.books || []).forEach(b => (b.words || []).forEach(x => push(x.w, x.ph, x.zh)));
+  out.forEach(x => { if (!x.zh) x.zh = glossOf(x.w); });
   return out;
 }
 
@@ -352,8 +370,9 @@ function buildPrompt() {
   const c = DB.config;
   const len = c.length;
   const topic = c.topic === 'auto' ? '你自己挑一个最适合今天读的方向' : c.topic;
-  // 目标词数量跟着篇幅走：短篇塞 7 个词会把句子挤变形，难度反而下降
-  const nWords = len <= 180 ? 4 : len <= 320 ? 6 : 8;
+  // 尽量多用词书里的词，但句子自然度优先
+  const nWords = len <= 180 ? 10 : len <= 320 ? 14 : 18;
+  const needWords = Math.max(5, nWords - 5);
   const words = pickWords(nWords);
   const minW = Math.round(len * 0.88), maxW = Math.round(len * 1.12);
   return {
@@ -378,7 +397,9 @@ function buildPrompt() {
 写完数一遍总词数，不足 ${minW} 就补一个具体例子或一层解释进去。
 
 难度：六级水平，但必须自然好读，不能为了难而难。
-必须自然用到这 ${nWords} 个词中的至少 ${nWords - 1} 个：${words.join(', ')}
+必须自然用到这 ${nWords} 个词中的至少 ${needWords} 个：${words.join(', ')}
+如果某个词会毁掉一句自然的英文，就不要用它——读得下去比用上更多生词重要得多。
+除了这几个，正文里能自然用上更多六级词汇就更好，不必拘泥于数量。
 
 写作要求：
 - 要有真实的信息价值或文学性。不要写"随着社会发展"这种空洞开头。
@@ -400,7 +421,7 @@ function buildPrompt() {
   "collocation": {"ph": "一个值得积累的搭配", "zh": "中文含义", "ex": "原文中的例句", "demo": "一个新的示范句", "frame": "用法要点和常见错误"}
 }
 
-words 给 ${nWords} 个，必须是正文里真实出现的词。listening 必须 2 道题。a 是正确选项的下标（0–3）。所有 opts 必须 4 项，且以 "A. " "B. " "C. " "D. " 开头。`
+words 给 ${Math.max(8, needWords)}–${nWords} 个，必须是正文里真实出现的词，并给每个词配中文释义。listening 必须 2 道题。a 是正确选项的下标（0–3）。所有 opts 必须 4 项，且以 "A. " "B. " "C. " "D. " 开头。`
       }
     ]
   };
@@ -797,8 +818,9 @@ function addWord(w) {
   const old = DB.words[w];
   const checks = old ? (old.checks || 0) : 0;
   DB.words[w] = {
-    p: meta.p || (bk && bk[1]) || (old && old.p) || '',
-    zh: meta.zh || (bk && bk[2]) || (old && old.zh) || '',
+    p: meta.p || (old && old.p) || '',
+    zh: meta.zh || (old && old.zh) || glossOf(w) || '',
+    ph: (old && old.ph) || phOf(w) || '',
     checks,
     wrong: old ? (old.wrong || 0) : 0,
     count: (old ? old.count : 0) + 1,
@@ -820,12 +842,14 @@ function recOf(w, p, zh) {
   let r = DB.words[w];
   if (!r) {
     r = DB.words[w] = {
-      p: p || '', zh: zh || '', checks: 0, wrong: 0, count: 0,
+      p: p || '', zh: zh || '', ph: '', checks: 0, wrong: 0, count: 0,
       firstAt: Date.now(), at: Date.now(), level: 1
     };
   }
   if (!r.zh && zh) r.zh = zh;
+  if (!r.zh) { const g = glossOf(w); if (g) r.zh = g; }
   if (!r.p && p) r.p = p;
+  if (!r.ph) { const h = phOf(w); if (h) r.ph = h; }
   if (typeof r.checks !== 'number') r.checks = 0;
   return r;
 }
@@ -864,6 +888,10 @@ function startGuess() {
     return { w: x.w, p: x.p || r.p || '', zh, opts, a: opts.indexOf(zh), ok: null };
   }).filter(it => it.zh && it.opts.length === 4);
 
+  if (items.length > 10) {
+    items.sort((a, b) => ((DB.words[a.w] || {}).checks || 0) - ((DB.words[b.w] || {}).checks || 0));
+    items.length = 10;
+  }
   if (!items.length) { toast('这篇没有可猜的词'); go('train'); return; }
   GUESS.items = items; GUESS.i = 0; GUESS.right = 0;
   GUESS.gained = 0; GUESS.mastered = 0; GUESS.saved = false;
@@ -1139,7 +1167,8 @@ function renderLibrary() {
 }
 
 
-let BOOK = { tab: 'cet6', filter: 'all', q: '' };
+let BOOK = { tab: 'cet6', filter: 'all', q: '', page: 0 };
+const BOOK_PER = 120;
 
 function statusKey(w) {
   const r = DB.words[w];
@@ -1150,12 +1179,32 @@ function statusKey(w) {
   return 'seen';
 }
 
+function cellHTML(w, ph, zh) {
+  const rec = DB.words[w] || {};
+  return `<div class="bcell st-${statusKey(w)}" data-w="${esc(w)}">
+    <div class="bw">${esc(w)}</div>
+    <div class="bph">${esc(ph || '')}</div>
+    ${zh ? `<div class="bz">${esc(zh)}</div>` : ''}
+    <div class="bc">${checks3(rec.checks || 0)}</div>
+  </div>`;
+}
+
+function pagerHTML(pages) {
+  if (pages <= 1) return '';
+  return `<div class="pager">
+    <b class="${BOOK.page === 0 ? 'off' : ''}" data-pg="-1">← 上一页</b>
+    <span>${BOOK.page + 1} / ${pages}</span>
+    <b class="${BOOK.page >= pages - 1 ? 'off' : ''}" data-pg="1">下一页 →</b>
+  </div>`;
+}
+
 function renderWords() {
   const pool = bookPool();
   const total = pool.length;
   const m = masteredCount();
   const learning = Object.values(DB.words).filter(w => { const c = w.checks || 0; return c > 0 && c < 3; }).length;
   const touched = Object.keys(DB.words).length;
+  const withZh = pool.filter(x => x.zh).length;
   const pct = total ? Math.round(m / total * 100) : 0;
 
   const head = `
@@ -1174,64 +1223,66 @@ function renderWords() {
         <div><b>${touched}</b><span>遇到过的词</span></div>
       </div>
       <div class="bh-bar"><i style="width:${pct}%"></i></div>
-      <div class="bh-note">已掌握 ${pct}%${(DB.books && DB.books.length) ? ' · 另有 ' + DB.books.length + ' 本导入词书' : ''}</div>
+      <div class="bh-note">已掌握 ${pct}% · 带释义 ${withZh} 个${(DB.books && DB.books.length) ? ' · 另有 ' + DB.books.length + ' 本导入词书' : ''}</div>
     </div>`;
 
   const tabs = `
     <div class="book-tabs">
-      <b class="${BOOK.tab === 'cet6' ? 'on' : ''}" data-t="cet6">六级核心 ${CET6_WORDS.length}</b>
+      <b class="${BOOK.tab === 'cet6' ? 'on' : ''}" data-t="cet6">六级词汇 ${total}</b>
       <b class="${BOOK.tab === 'mine' ? 'on' : ''}" data-t="mine">我遇到过的 ${touched}</b>
     </div>`;
 
+  let list = [];
   if (BOOK.tab === 'mine') {
-    const list = Object.entries(DB.words).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
-    $('#wordsBody').innerHTML = head + tabs + (list.length ? `
-      <div class="simple">
-        <div class="wgrid">
-          ${list.map(([w, v]) => `
-            <div class="bcell st-${statusKey(w)}" data-w="${esc(w)}">
-              <div class="bw">${esc(w)}</div>
-              <div class="bz">${esc(v.p || '')} ${esc(v.zh || '')}</div>
-              <div class="bc">${checks3(v.checks || 0)}</div>
-            </div>`).join('')}
-        </div>
-      </div>` : `<div class="simple"><p class="lead" style="margin:0">还没有遇到过的词。读一篇文章，点一下橙色的词就会进来。</p></div>`);
+    list = Object.entries(DB.words)
+      .sort((a, b) => (b[1].at || 0) - (a[1].at || 0))
+      .map(([w, v]) => ({ w, ph: v.ph || phOf(w), zh: v.zh || '' }));
   } else {
-    const filters = [['all', '全部'], ['none', '未开始'], ['learning', '学习中'], ['mastered', '已掌握']];
-    const list = pool.filter(x => {
-      if (BOOK.q && !x.w.includes(BOOK.q.toLowerCase()) && !String(x.zh).includes(BOOK.q)) return false;
+    list = pool.filter(x => {
+      if (BOOK.q && !x.w.includes(BOOK.q.toLowerCase()) && !String(x.zh || '').includes(BOOK.q)) return false;
       if (BOOK.filter === 'all') return true;
       const st = statusKey(x.w);
       if (BOOK.filter === 'none') return st === 'none' || st === 'seen';
       return st === BOOK.filter;
     });
-    $('#wordsBody').innerHTML = head + tabs + `
-      <div class="simple">
-        <div class="book-tools">
-          <input class="book-q" id="bookQ" placeholder="搜索单词或释义…" value="${esc(BOOK.q)}">
-          <div class="book-filters">
-            ${filters.map(([k, n]) => `<b data-f="${k}" class="${BOOK.filter === k ? 'on' : ''}">${n}</b>`).join('')}
-          </div>
-        </div>
-        <div class="book-count">${list.length} 个</div>
-        <div class="wgrid">
-          ${list.map(x => `
-            <div class="bcell st-${statusKey(x.w)}" data-w="${esc(x.w)}">
-              <div class="bw">${esc(x.w)}</div>
-              <div class="bz">${esc(x.p || '')} ${esc(x.zh || '')}</div>
-              <div class="bc">${checks3((DB.words[x.w] || {}).checks || 0)}</div>
-            </div>`).join('')}
-        </div>
-      </div>`;
   }
 
-  $$('#wordsBody .book-tabs b').forEach(el => el.onclick = () => { BOOK.tab = el.dataset.t; renderWords(); });
-  $$('#wordsBody .book-filters b').forEach(el => el.onclick = () => { BOOK.filter = el.dataset.f; renderWords(); });
+  const pages = Math.max(1, Math.ceil(list.length / BOOK_PER));
+  if (BOOK.page >= pages) BOOK.page = pages - 1;
+  if (BOOK.page < 0) BOOK.page = 0;
+  const slice = list.slice(BOOK.page * BOOK_PER, BOOK.page * BOOK_PER + BOOK_PER);
+
+  const filters = [['all', '全部'], ['none', '未开始'], ['learning', '学习中'], ['mastered', '已掌握']];
+  const tools = BOOK.tab === 'cet6' ? `
+    <div class="book-tools">
+      <input class="book-q" id="bookQ" placeholder="搜索单词或释义…" value="${esc(BOOK.q)}">
+      <div class="book-filters">
+        ${filters.map(([k, n]) => `<b data-f="${k}" class="${BOOK.filter === k ? 'on' : ''}">${n}</b>`).join('')}
+      </div>
+    </div>` : '';
+
+  $('#wordsBody').innerHTML = head + tabs + `
+    <div class="simple">
+      ${tools}
+      <div class="book-count">${list.length} 个${BOOK.tab === 'cet6' && !BOOK.q && BOOK.filter === 'all' ? '' : '（已筛选）'}</div>
+      ${list.length ? `<div class="wgrid">${slice.map(x => cellHTML(x.w, x.ph, x.zh)).join('')}</div>` + pagerHTML(pages)
+        : `<p class="lead" style="margin:0">${BOOK.tab === 'mine' ? '还没有遇到过的词。读一篇文章，点一下橙色的词就会进来。' : '没有符合条件的词。'}</p>`}
+    </div>`;
+
+  $$('#wordsBody .book-tabs b').forEach(el => el.onclick = () => { BOOK.tab = el.dataset.t; BOOK.page = 0; renderWords(); });
+  $$('#wordsBody .book-filters b').forEach(el => el.onclick = () => { BOOK.filter = el.dataset.f; BOOK.page = 0; renderWords(); });
+  $$('#wordsBody .pager b').forEach(el => el.onclick = () => {
+    if (el.classList.contains('off')) return;
+    BOOK.page += +el.dataset.pg;
+    renderWords();
+    $('#main').scrollTop = 0;
+  });
   $$('#wordsBody .bcell').forEach(el => el.onclick = () => { speakText(el.dataset.w); });
   const q = $('#bookQ');
   if (q) {
     q.oninput = e => {
       BOOK.q = e.target.value;
+      BOOK.page = 0;
       const pos = e.target.selectionStart;
       renderWords();
       const nq = $('#bookQ');

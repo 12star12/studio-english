@@ -444,12 +444,19 @@ textarea:focus{outline:none;border-color:#C7D8FD;background:#fff}
 }
 .book-filters b.on{background:#EDF2FE;border-color:#CFDCFC;color:#3A66D8;font-weight:600}
 .book-count{font-size:11px;color:#BDB6A9;margin-bottom:10px}
-.bcell{border:1px solid var(--line);border-radius:11px;padding:10px 12px;background:#FDFCFA;cursor:pointer;transition:.15s;position:relative}
+.bcell{border:1px solid var(--line);border-radius:11px;padding:10px 12px;background:#FDFCFA;cursor:pointer;transition:.15s;position:relative;display:flex;flex-direction:column;min-height:84px}
 .bcell:hover{border-color:#DFD8CA;background:#fff;transform:translateY(-1px)}
 .bw{font-size:13px;font-weight:600;letter-spacing:-.2px}
 .bz{font-size:11px;color:var(--sub);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bc{display:flex;gap:3px;margin-top:7px}
+.bc{display:flex;gap:3px;margin-top:auto;padding-top:8px}
 .bc b{width:14px;height:14px;border-radius:5px;background:#F3EFE7;color:#DDD6C8;font-size:9px;font-weight:700;display:grid;place-items:center;line-height:1}
 .bc b.on{background:#E4F3DC;color:#5BA545}
 .bcell.st-mastered{background:#F7FCF4;border-color:#DFEEDA}
 .bcell.st-learning{background:#FFFCF5;border-color:#F4EAD6}
+.bph{font-size:10px;color:#BDB6A6;margin-top:1px;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:18px}
+.pager b{font-size:12px;font-weight:500;color:#4A7BF7;cursor:pointer;padding:6px 13px;border-radius:9px;background:#F3F7FF}
+.pager b:hover{background:#E8F0FF}
+.pager b.off{color:#CFC9BE;background:#FAF8F4;cursor:default}
+.pager span{font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums}
+.wgrid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
