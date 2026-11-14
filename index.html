@@ -138,9 +138,8 @@
 <!-- ============ LISTEN ============ -->
 <section id="v-listen" hidden>
   <div class="bar">
-    <button class="back" data-go="home">← 返回</button>
-    <h2><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A8823F" stroke-width="1.8" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2" y="14" width="4" height="6" rx="2"/><rect x="18" y="14" width="4" height="6" rx="2"/></svg>先听</h2>
-    <div class="steps"><i class="on"></i><i></i><i></i></div>
+    <button class="back" id="backListen">← 返回</button>
+    <h2><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A8823F" stroke-width="1.8" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2" y="14" width="4" height="6" rx="2"/><rect x="18" y="14" width="4" height="6" rx="2"/></svg>听力</h2>
   </div>
   <div class="listen-grid">
     <div class="card">
@@ -209,6 +208,7 @@
         <button class="btn sm" id="qPrev">上一题</button>
         <button class="btn b sm" id="qSubmit">提交答案</button>
         <button class="btn b sm" id="toRead" hidden>看原文 →</button>
+        <button class="hint-link" id="skipListen" type="button">不想做题，直接看原文 →</button>
       </div>
     </div>
   </div>
@@ -225,7 +225,7 @@
 <!-- ============ READ ============ -->
 <section id="v-read" hidden>
   <div class="bar">
-    <button class="back" data-go="listen">← 返回</button>
+    <button class="back" id="backRead">← 返回</button>
     <h2 style="flex:1">原文</h2>
     <button class="btn sm" id="readPlay">▶ 全文朗读</button>
     <select class="sel mini" id="readRate"><option value="0.85">0.85×</option><option value="1" selected>1.0×</option><option value="1.15">1.15×</option><option value="1.3">1.3×</option></select>
@@ -253,7 +253,7 @@
 <!-- ============ GUESS ============ -->
 <section id="v-guess" hidden>
   <div class="bar">
-    <button class="back" data-go="read">← 回到原文</button>
+    <button class="back" id="backGuess">← 返回</button>
     <h2 style="flex:1">猜词</h2>
     <span class="gcount" id="gCount">0 / 0</span>
   </div>
@@ -265,12 +265,11 @@
 <!-- ============ TRAIN ============ -->
 <section id="v-train" hidden>
   <div class="bar">
-    <button class="back" data-go="guess">← 返回猜词</button>
+    <button class="back" id="backTrain">← 返回</button>
     <h2><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A8823F" stroke-width="1.8" stroke-linecap="round"><path d="M8 4h8v4a4 4 0 0 1-8 0z"/><path d="M12 12v4M8 20h8"/></svg>综合训练</h2>
-    <div class="steps"><i class="on"></i><i class="on"></i><i class="on"></i></div>
   </div>
   <div class="train-grid">
-    <div class="tcard">
+    <div class="tcard" id="rCard">
       <div class="th"><span class="num" style="background:#A8823F">1</span>阅读理解</div>
       <div class="tbody">
         <div class="stem" id="rq"></div>
@@ -282,7 +281,7 @@
       </div>
       <div class="answer" id="rAns" hidden></div>
     </div>
-    <div class="tcard">
+    <div class="tcard" id="tCard2">
       <div class="th"><span class="num" style="background:#5E7A55">2</span>长难句翻译</div>
       <div class="tbody">
         <div class="stem" id="tq"></div>
@@ -294,7 +293,7 @@
       </div>
       <div class="answer" id="tAns" hidden></div>
     </div>
-    <div class="tcard">
+    <div class="tcard" id="cCard3">
       <div class="th"><span class="num" style="background:#A8823F">3</span>搭配造句</div>
       <div class="tbody">
         <div class="stem" id="cq"></div>

@@ -23,7 +23,8 @@ const DEFAULT_DB = {
   config: {
     provider: 'zhipu', baseUrl: PROVIDERS.zhipu.baseUrl, apiKey: '', model: PROVIDERS.zhipu.model,
     interests: ['金融与商业', '科技', '艺术', '文学'],
-    length: 250, topic: 'auto', accent: 'en-US', rate: 1, voice: 'en-US-AriaNeural'
+    length: 250, topic: 'auto', accent: 'en-US', rate: 1, voice: 'en-US-AriaNeural',
+    steps: { listen: true, guess: true, train: true }, order: 'listen'
   },
   articles: [], words: {}, books: [],
   progress: { xp: 0, listenLog: [], readLog: [], guessLog: [], days: {}, doneIds: [], trans: '', coll: '', achievements: {} }
@@ -549,6 +550,65 @@ function bumpDay(n) {
 }
 
 /* ---------------- 打开文章 ---------------- */
+/* 环节开关：steps 里关掉的环节不进流程；order 决定听力和阅读谁先 */
+function flow() {
+  const s = DB.config.steps || {};
+  const f = [];
+  if (s.listen !== false && DB.config.order !== 'read') f.push('listen');
+  f.push('read');
+  if (s.listen !== false && DB.config.order === 'read') f.push('listen');
+  if (s.guess !== false) f.push('guess');
+  if (s.train !== false) f.push('train');
+  f.push('done');
+  return f;
+}
+function nextStep(k) {
+  const f = flow();
+  const i = f.indexOf(k);
+  return i >= 0 && i + 1 < f.length ? f[i + 1] : 'done';
+}
+function prevStep(k) {
+  const f = flow();
+  const i = f.indexOf(k);
+  return i > 0 ? f[i - 1] : null;
+}
+const STEPN = { listen: '听力', read: '原文', guess: '猜词', train: '训练' };
+function ctaFor(k) {
+  const n = nextStep(k);
+  if (n === 'read') return '看原文 →';
+  if (n === 'listen') return k === 'read' ? '去听这篇 →' : '听这篇的朗读 →';
+  if (n === 'guess') return k === 'read' ? '先猜词，再翻译 →' : '去猜词 →';
+  if (n === 'train') return '去做练习 →';
+  return '完成这篇 →';
+}
+
+/* 依据当前开关刷新四张页面的返回按钮 / 主按钮文案 */
+function updateFlowUI() {
+  const f = flow();
+  const set = (id, label, target) => {
+    const b = $(id); if (!b) return;
+    b.textContent = label;
+    b.onclick = target === 'home' ? () => go('home') : () => go(target);
+  };
+  // 听力页返回：先听 → 返回首页；先读 → 回到原文
+  const lvPrev = prevStep('listen');
+  set('#backListen', lvPrev === 'read' ? '← 回到原文' : '← 返回', lvPrev || 'home');
+  // 阅读页返回
+  const rdPrev = prevStep('read');
+  set('#backRead', rdPrev === 'listen' ? '← 回到听力' : '← 返回', rdPrev || 'home');
+  // 猜词页返回
+  const gsPrev = prevStep('guess');
+  set('#backGuess', gsPrev ? '← 回到' + (STEPN[gsPrev] || '') : '← 返回', gsPrev || 'home');
+  // 训练页返回
+  const trPrev = prevStep('train');
+  set('#backTrain', trPrev ? '← 返回' + (STEPN[trPrev] || '') : '← 返回', trPrev || 'home');
+  // 听力页主按钮与跳过
+  $('#toRead').textContent = ctaFor('listen');
+  $('#skipListen').textContent = nextStep('listen') === 'read' ? '不想做题，直接看原文 →' : '不想做题，直接进行下一步 →';
+  // 阅读页主按钮
+  $('#toGuess').textContent = ctaFor('read');
+}
+
 function openArticle(a) {
   cur = a; curIdx = 0; loop = -1;
   $('#artTitle').textContent = a.title;
@@ -556,11 +616,14 @@ function openArticle(a) {
   $('#rate').value = String(DB.config.rate || 1);
   $('#readRate').value = String(DB.config.rate || 1);
   buildSents();
+  qi = 0; answered = [];
+  $('#toRead').hidden = true;
   renderListen();
   renderQ();
   renderRead();
   renderTrain();
-  go('listen');
+  updateFlowUI();
+  go(flow()[0]);
   prefetch(0, 4);
 }
 
@@ -740,12 +803,11 @@ function renderQ() {
   if (!cur) return;
   answered = answered.length === cur.listening.length ? answered : cur.listening.map(() => false);
   const q = cur.listening[qi];
-  if (!q) { $('#qArea').innerHTML = '<div class="empty-note">这篇文章没有听力题</div>'; return; }
+  if (!q) { $('#qArea').innerHTML = '<div class="empty-note">这篇文章没有听力题</div>'; $('#toRead').hidden = false; return; }
   $('#qProg').textContent = (qi + 1) + ' / ' + cur.listening.length;
   $('#qArea').innerHTML = `<div class="qn">Q${qi + 1}</div><div class="qtext">${esc(q.q)}</div>` +
     q.opts.map((o, i) => `<label class="opt" data-i="${i}"><input type="radio" name="q${qi}" value="${i}">${esc(o)}</label>`).join('');
   $('#qPrev').disabled = qi === 0;
-  if (!$('#toRead').hidden) return;
 }
 $('#qPrev').onclick = () => { if (qi > 0) { qi--; renderQ(); } };
 $('#qSubmit').onclick = () => {
@@ -768,7 +830,8 @@ $('#qSubmit').onclick = () => {
   $('#qArea').appendChild(box);
   if (answered.every(Boolean)) { $('#toRead').hidden = false; checkAch(); }
 };
-$('#toRead').onclick = () => go('read');
+$('#toRead').onclick = () => go(nextStep('listen'));
+$('#skipListen').onclick = () => go(nextStep('listen'));
 
 /* ---------------- 阅读页 ---------------- */
 function mark(text) {
@@ -810,7 +873,13 @@ $('#readPlay').onclick = () => {
   speak(0);
 };
 $('#zhToggle').onclick = () => { const z = $('#zhAll'); z.hidden = !z.hidden; };
-$('#toGuess').onclick = () => { stopAudio(); startGuess(); };
+$('#toGuess').onclick = () => {
+  stopAudio();
+  const n = nextStep('read');
+  if (n === 'guess') startGuess();
+  else if (n === 'done') $('#toDone').click();
+  else go(n);
+};
 
 function addWord(w) {
   const meta = (cur.words || []).find(x => x.w === w) || { p: '', zh: '' };
@@ -892,7 +961,12 @@ function startGuess() {
     items.sort((a, b) => ((DB.words[a.w] || {}).checks || 0) - ((DB.words[b.w] || {}).checks || 0));
     items.length = 10;
   }
-  if (!items.length) { toast('这篇没有可猜的词'); go('train'); return; }
+  if (!items.length) {
+    toast('这篇没有可猜的词');
+    const n = nextStep('guess');
+    if (n === 'done') $('#toDone').click(); else go(n);
+    return;
+  }
   GUESS.items = items; GUESS.i = 0; GUESS.right = 0;
   GUESS.gained = 0; GUESS.mastered = 0; GUESS.saved = false;
   go('guess');
@@ -1009,9 +1083,9 @@ function renderGuessDone() {
         <div><b>${GUESS.mastered}</b><span>这轮新掌握</span></div>
         <div><b>${masteredCount()}</b><span>累计掌握</span></div>
       </div>
-      <button class="btn b" id="gToTrain">进入综合训练 →</button>
+      <button class="btn b" id="gToTrain">${nextStep('guess') === 'train' ? '进入综合训练 →' : '完成这篇 →'}</button>
     </div>`;
-  $('#gToTrain').onclick = () => go('train');
+  $('#gToTrain').onclick = () => { const n = nextStep('guess'); if (n === 'done') $('#toDone').click(); else go(n); };
   checkAch();
 }
 
@@ -1360,6 +1434,7 @@ function renderGrowth() {
 function renderSettings() {
   const c = DB.config;
   const p = PROVIDERS[c.provider] || PROVIDERS.zhipu;
+  const s = c.steps = Object.assign({ listen: true, guess: true, train: true }, c.steps || {});
   $('#settingsBody').innerHTML = `
     <div class="simple" style="margin-bottom:14px">
       <h2>AI 接口</h2>
@@ -1394,6 +1469,33 @@ function renderSettings() {
         <button class="btn b" id="saveCfg">保存</button>
         <button class="btn" id="testCfg">测试连接</button>
         <span class="gen-hint" id="testMsg"></span>
+      </div>
+    </div>
+
+    <div class="simple" style="margin-bottom:14px">
+      <h2>学习环节</h2>
+      <p class="lead">把流程改成你舒服的样子。关掉的环节不进流程，随时可以再打开，进度和成就不受影响。</p>
+      <div class="step-list">
+        <div class="step-row">
+          <div class="s-info"><b>听力</b><span>放朗读音频，做两道听力小题</span></div>
+          <label class="sw"><input type="checkbox" id="tgListen" ${s.listen !== false ? 'checked' : ''}><i></i></label>
+        </div>
+        <div class="step-row">
+          <div class="s-info"><b>猜词</b><span>读完遮住释义猜意思，猜对拿勾，三个勾算初步掌握</span></div>
+          <label class="sw"><input type="checkbox" id="tgGuess" ${s.guess !== false ? 'checked' : ''}><i></i></label>
+        </div>
+        <div class="step-row">
+          <div class="s-info"><b>综合训练</b><span>阅读理解、长难句翻译、搭配造句</span></div>
+          <label class="sw"><input type="checkbox" id="tgTrain" ${s.train !== false ? 'checked' : ''}><i></i></label>
+        </div>
+      </div>
+      <div class="field" style="margin-top:16px">
+        <label>听力顺序</label>
+        <div class="topic-row">
+          <div class="topic ${c.order === 'read' ? '' : 'on'}" data-ord="listen">先听后读</div>
+          <div class="topic ${c.order === 'read' ? 'on' : ''}" data-ord="read">先读后听</div>
+        </div>
+        <div class="tip">听力现在不行？选「先读后听」——先读懂文章，再放朗读磨耳朵。</div>
       </div>
     </div>
 
@@ -1448,6 +1550,14 @@ function renderSettings() {
   };
   $('#setVoice').onchange = e => { DB.config.voice = e.target.value; save(); toast('音色已切换'); };
   $('#getKey').onclick = e => { e.preventDefault(); window.studio.openExternal('https://open.bigmodel.cn/usercenter/apikeys'); };
+  $('#tgListen').onchange = e => { s.listen = e.target.checked; save(); toast(s.listen ? '听力已加入流程' : '听力已关闭，直接进原文'); };
+  $('#tgGuess').onchange = e => { s.guess = e.target.checked; save(); toast(s.guess ? '猜词已加入流程' : '猜词已关闭'); };
+  $('#tgTrain').onchange = e => { s.train = e.target.checked; save(); toast(s.train ? '综合训练已加入流程' : '综合训练已关闭'); };
+  $$('#settingsBody .topic[data-ord]').forEach(el => el.onclick = () => {
+    c.order = el.dataset.ord; save();
+    $$('#settingsBody .topic[data-ord]').forEach(x => x.classList.toggle('on', x === el));
+    toast(c.order === 'read' ? '以后先看原文，再听朗读' : '以后先听朗读，再看原文');
+  });
   $$('#interestRow .topic').forEach(el => el.onclick = () => {
     const t = el.dataset.t;
     const i = c.interests.indexOf(t);

@@ -293,6 +293,21 @@ textarea:focus{outline:none;border-color:#C7D8FD;background:#fff}
 }
 .field input:focus{outline:none;border-color:#C7D8FD;background:#fff}
 .field .tip{font-size:11px;color:#B5AFA4;margin-top:5px;line-height:1.6}
+/* ---------- 环节开关 ---------- */
+.step-list{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#FDFCFA}
+.step-row{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--line)}
+.step-row:last-child{border-bottom:0}
+.step-row .s-info b{display:block;font-size:13px;font-weight:600;color:var(--ink)}
+.step-row .s-info span{display:block;font-size:11px;color:var(--sub);margin-top:2px;line-height:1.5}
+.sw{position:relative;display:inline-block;width:40px;height:22px;flex:none;cursor:pointer}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw i{position:absolute;inset:0;background:#EAE4D6;border:1px solid #DBD2BE;border-radius:22px;transition:.18s;display:block}
+.sw i::after{
+  content:'';position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;
+  background:#FFFDF8;border:1px solid #C9BFA6;transition:.18s;box-sizing:border-box;
+}
+.sw input:checked+i{background:var(--green);border-color:var(--green)}
+.sw input:checked+i::after{transform:translateX(17px);border-color:var(--green)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 20px}
 .ach-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
 .ach{border:1px solid var(--line);border-radius:12px;padding:14px 10px;text-align:center;background:#FDFCFA}
