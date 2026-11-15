@@ -611,6 +611,12 @@ function prevStep(k) {
   const i = f.indexOf(k);
   return i > 0 ? f[i - 1] : null;
 }
+/* 进入某个环节的正确入口：猜词必须先 startGuess() 初始化题目，直接 go() 会得到空页 */
+function enterStep(n) {
+  if (!n || n === 'done') { $('#toDone').click(); return; }
+  if (n === 'guess') { startGuess(); return; }
+  go(n);
+}
 const STEPN = { listen: '听力', read: '原文', guess: '猜词', train: '训练' };
 function ctaFor(k) {
   const n = nextStep(k);
@@ -917,8 +923,8 @@ $('#qSubmit').onclick = () => {
   $('#qNext').classList.toggle('b', qi < cur.listening.length - 1);
   if (answered.every(Boolean)) { $('#toRead').hidden = false; checkAch(); }
 };
-$('#toRead').onclick = () => go(nextStep('listen'));
-$('#skipListen').onclick = () => go(nextStep('listen'));
+$('#toRead').onclick = () => enterStep(nextStep('listen'));
+$('#skipListen').onclick = () => enterStep(nextStep('listen'));
 
 /* ---------------- 阅读页 ---------------- */
 function mark(text) {
@@ -975,10 +981,7 @@ $('#readPlay').onclick = () => {
 $('#zhToggle').onclick = () => { const z = $('#zhAll'); z.hidden = !z.hidden; };
 $('#toGuess').onclick = () => {
   stopAudio();
-  const n = nextStep('read');
-  if (n === 'guess') startGuess();
-  else if (n === 'done') $('#toDone').click();
-  else go(n);
+  enterStep(nextStep('read'));
 };
 
 function addWord(w) {
@@ -1063,8 +1066,7 @@ function startGuess() {
   }
   if (!items.length) {
     toast('这篇没有可猜的词');
-    const n = nextStep('guess');
-    if (n === 'done') $('#toDone').click(); else go(n);
+    enterStep(nextStep('guess'));
     return;
   }
   GUESS.items = items; GUESS.i = 0; GUESS.right = 0;
@@ -1185,7 +1187,7 @@ function renderGuessDone() {
       </div>
       <button class="btn b" id="gToTrain">${nextStep('guess') === 'train' ? '进入综合训练 →' : '完成这篇 →'}</button>
     </div>`;
-  $('#gToTrain').onclick = () => { const n = nextStep('guess'); if (n === 'done') $('#toDone').click(); else go(n); };
+  $('#gToTrain').onclick = () => enterStep(nextStep('guess'));
   checkAch();
 }
 
