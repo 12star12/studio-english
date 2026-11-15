@@ -81,6 +81,11 @@ async function boot() {
     DB.progress = Object.assign({}, DEFAULT_DB.progress, data.progress || {});
     // 一次性迁移：老数据里 order 是旧默认 listen（从未被主动选过）——按用户意愿改为先读后听
     if (!DB.config.cfgV) { DB.config.order = 'read'; DB.config.cfgV = 2; save(); }
+    // 题目兜底：洗掉历史文章里 AI 写坏的题（答案下标越界等）
+    DB.articles.forEach(a => {
+      a.listening = (a.listening || []).map(fixQ).filter(Boolean);
+      if (a.reading) { const r = fixQ(a.reading); if (r) a.reading = r; }
+    });
   }
   renderHome();
   renderSideLevel();
@@ -470,8 +475,20 @@ function normalize(obj) {
   obj.len = count;
   obj.title = obj.title || 'Untitled';
   obj.words = Array.isArray(obj.words) ? obj.words.filter(w => w && w.w) : [];
-  obj.listening = Array.isArray(obj.listening) ? obj.listening : [];
+  obj.listening = (Array.isArray(obj.listening) ? obj.listening : []).map(fixQ).filter(Boolean);
+  if (obj.reading) { const r = fixQ(obj.reading); if (r) obj.reading = r; else obj.reading = null; }
   return obj;
+}
+
+// 题目兜底：AI 偶尔把答案下标写越界（4 个选项却给 a=4 → 渲染成"E"）、选项数不足、缺题干等
+function fixQ(q) {
+  if (!q || !q.q || !Array.isArray(q.opts)) return null;
+  let opts = q.opts.map(o => String(o || '').trim()).filter(Boolean).slice(0, 4);
+  if (opts.length < 2) return null;
+  let a = Math.round(Number(q.a));
+  // 下标越界：模型常把 1-based 序号当 0-based 下标（4 个选项给 a=4）→ 按 0-based 收进去
+  if (!(a >= 0 && a < opts.length)) a = a === opts.length ? opts.length - 1 : Math.min(Math.max(0, a), opts.length - 1);
+  return { q: String(q.q), opts, a, exp: String(q.exp || '') };
 }
 
 async function generate() {
