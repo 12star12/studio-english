@@ -207,6 +207,7 @@
       <div id="qArea"></div>
       <div class="acts">
         <button class="btn sm" id="qPrev">上一题</button>
+        <button class="btn sm" id="qNext">下一题 →</button>
         <button class="btn b sm" id="qSubmit">提交答案</button>
         <button class="btn b sm" id="toRead" hidden>看原文 →</button>
         <button class="hint-link" id="skipListen" type="button">不想做题，直接看原文 →</button>
@@ -394,6 +395,11 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<aside class="lk-pop" id="lkPop" hidden>
+  <button class="lk-x" id="lkClose" title="关闭">×</button>
+  <div class="lk-en"><b id="lkEn"></b><span class="lk-ph" id="lkPh"></span><button class="lk-spk" id="lkSpk" title="读一遍"><svg viewBox="0 0 24 24" width="13" height="13" fill="#A8823F"><path d="M8 5v14l11-7z"/></svg></button></div>
+  <div class="lk-zh" id="lkZh"></div>
+</aside>
 <button class="mark-btn" id="markBtn" hidden>
   <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
   收进摘抄本

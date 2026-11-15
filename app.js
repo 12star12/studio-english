@@ -113,6 +113,7 @@ function renderSideLevel() {
 /* ---------------- 视图 ---------------- */
 function go(v) {
   stopAudio();
+  const lp = $('#lkPop'); if (lp) lp.hidden = true;
   ['home', 'listen', 'read', 'guess', 'train', 'done', 'library', 'words', 'marks', 'growth', 'settings']
     .forEach(k => { const el = $('#v-' + k); if (el) el.hidden = k !== v; });
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === v));
@@ -648,7 +649,7 @@ function openArticle(a) {
   $('#rate').value = String(DB.config.rate || 1);
   $('#readRate').value = String(DB.config.rate || 1);
   buildSents();
-  qi = 0; answered = [];
+  qi = 0; answered = []; picked = [];
   $('#toRead').hidden = true;
   renderListen();
   renderQ();
@@ -722,9 +723,11 @@ function setPlayIcon(isPlaying) {
   if (rp) rp.textContent = isPlaying ? '⏸ 停止' : '▶ 全文朗读';
 }
 
-async function speak(i) {
+let playScope = null; // 段落播放时锁定在该段内，播完自动停，不串到后面段落
+async function speak(i, scope) {
   const sents = cur && cur._sents;
   if (!sents || i < 0 || i >= sents.length) { stopAudio(); return; }
+  playScope = (scope === undefined) ? null : scope;
   stopAudio();
   curIdx = i; playing = true;
   paint(); setPlayIcon(true);
@@ -739,7 +742,8 @@ async function speak(i) {
     if (!playing) return;
     const n = loop >= 0 ? loop : i + 1;
     if (n >= sents.length) { stopAudio(); return; }
-    setTimeout(() => { if (playing) speak(n); }, 150);
+    if (playScope !== null && sents[n].p !== playScope) { stopAudio(); return; }
+    setTimeout(() => { if (playing) speak(n, playScope); }, 150);
   };
   audioEl.play().catch(() => { });
   prefetch(i + 1, 3);
@@ -757,7 +761,8 @@ function fallbackSpeak(text, i) {
     const sents = cur._sents;
     const n = loop >= 0 ? loop : i + 1;
     if (n >= sents.length) { stopAudio(); return; }
-    setTimeout(() => { if (playing) speak(n); }, 150);
+    if (playScope !== null && sents[n].p !== playScope) { stopAudio(); return; }
+    setTimeout(() => { if (playing) speak(n, playScope); }, 150);
   };
   ss.speak(u);
 }
@@ -765,15 +770,27 @@ function fallbackSpeak(text, i) {
 function stopAudio() {
   playing = false;
   try { audioEl.pause(); audioEl.currentTime = 0; } catch (e) { }
-  try { window.speechSynthesis.cancel(); } catch (e) { }
+  stopText();
   setPlayIcon(false);
 }
 
+/* 划词/点词的声音：全局只允许一个在响，任何新声音都会顶掉旧的 */
+let textAudio = null, textToken = 0;
+function stopText() {
+  textToken++;
+  if (textAudio) { try { textAudio.pause(); } catch (e) { } textAudio = null; }
+  try { window.speechSynthesis.cancel(); } catch (e) { }
+}
 async function speakText(t) {
+  stopAudio();
+  const tok = textToken;
   const url = await getAudio(t);
+  if (tok !== textToken) return;
   if (url) {
     const a = new Audio(url);
     a.playbackRate = DB.config.rate || 1;
+    a.onended = () => { if (textAudio === a) textAudio = null; };
+    textAudio = a;
     a.play().catch(() => { });
     return;
   }
@@ -830,36 +847,57 @@ $('#accent').onchange = e => { DB.config.voice = e.target.value; save(); };
 $('#rate').onchange = e => { DB.config.rate = parseFloat(e.target.value); save(); };
 $('#readRate').onchange = e => { DB.config.rate = parseFloat(e.target.value); save(); };
 
-let qi = 0, answered = [];
+let qi = 0, answered = [], picked = [];
 function renderQ() {
   if (!cur) return;
-  answered = answered.length === cur.listening.length ? answered : cur.listening.map(() => false);
+  if (answered.length !== cur.listening.length) { answered = cur.listening.map(() => false); picked = cur.listening.map(() => -1); }
   const q = cur.listening[qi];
   if (!q) { $('#qArea').innerHTML = '<div class="empty-note">这篇文章没有听力题</div>'; $('#toRead').hidden = false; return; }
   $('#qProg').textContent = (qi + 1) + ' / ' + cur.listening.length;
   $('#qArea').innerHTML = `<div class="qn">Q${qi + 1}</div><div class="qtext">${esc(q.q)}</div>` +
     q.opts.map((o, i) => `<label class="opt" data-i="${i}"><input type="radio" name="q${qi}" value="${i}">${esc(o)}</label>`).join('');
   $('#qPrev').disabled = qi === 0;
+  $('#qNext').disabled = qi >= cur.listening.length - 1;
+  // 答过的题恢复状态：选中项、对错标色、解析
+  const done = !!answered[qi];
+  $('#qSubmit').disabled = done;
+  $('#qSubmit').classList.toggle('b', !done);
+  $('#qNext').classList.toggle('b', done && qi < cur.listening.length - 1);
+  if (done) {
+    const radio = $('#qArea input[value="' + picked[qi] + '"]');
+    if (radio) radio.checked = true;
+    applyAnswer();
+  }
 }
-$('#qPrev').onclick = () => { if (qi > 0) { qi--; renderQ(); } };
-$('#qSubmit').onclick = () => {
-  const sel = $('#qArea input:checked');
-  if (!sel) { toast('先选一个'); return; }
-  const q = cur.listening[qi], pick = +sel.value;
+function applyAnswer() {
+  const q = cur.listening[qi], pick = picked[qi];
   $$('#qArea .opt').forEach((el, i) => {
+    el.classList.remove('right', 'wrong');
     if (i === q.a) el.classList.add('right');
     else if (i === pick) el.classList.add('wrong');
   });
-  if (!answered[qi]) {
-    answered[qi] = true;
-    DB.progress.listenLog.push(pick === q.a ? 1 : 0);
-    save();
-  }
   const old = $('#qArea .exp'); if (old) old.remove();
   const box = document.createElement('div');
   box.className = 'exp';
   box.innerHTML = `<b>${pick === q.a ? '答对了' : '正确是 ' + String.fromCharCode(65 + q.a)}</b><br>${esc(q.exp)}`;
   $('#qArea').appendChild(box);
+}
+$('#qPrev').onclick = () => { if (qi > 0) { qi--; renderQ(); } };
+$('#qNext').onclick = () => { if (qi < cur.listening.length - 1) { qi++; renderQ(); } };
+$('#qSubmit').onclick = () => {
+  const sel = $('#qArea input:checked');
+  if (!sel) { toast('先选一个'); return; }
+  const q = cur.listening[qi], pick = +sel.value;
+  picked[qi] = pick;
+  if (!answered[qi]) {
+    answered[qi] = true;
+    DB.progress.listenLog.push(pick === q.a ? 1 : 0);
+    save();
+  }
+  applyAnswer();
+  $('#qSubmit').disabled = true;
+  $('#qSubmit').classList.remove('b');
+  $('#qNext').classList.toggle('b', qi < cur.listening.length - 1);
   if (answered.every(Boolean)) { $('#toRead').hidden = false; checkAch(); }
 };
 $('#toRead').onclick = () => go(nextStep('listen'));
@@ -885,13 +923,26 @@ function renderRead() {
     const sp = e.target.closest('.spk');
     if (sp) {
       const pi = +sp.dataset.sp;
+      const cs = cur._sents[curIdx];
+      if (playing && cs && cs.p === pi) { stopAudio(); return; } // 再点一次 = 停
       const idx = cur._sents.findIndex(s => s.p === pi);
-      if (idx >= 0) speak(idx);
+      if (idx >= 0) speak(idx, pi); // 只播这一段，段尾自动停
       return;
     }
     const w = e.target.closest('.w');
-    if (w) { addWord(w.dataset.w); speakText(w.textContent); }
+    if (w) { addWord(w.dataset.w); speakText(w.textContent); return; }
+    // 划选的朗读交给 mouseup 处理；单纯点一下正文 = 打断当前所有声音
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) stopAudio();
   }));
+
+  // 双击 = 查词/查句（浮窗显示翻译）
+  $('#artBody').addEventListener('dblclick', e => {
+    if (e.target.closest('.spk')) return;
+    const s = window.getSelection();
+    const t = s ? String(s).trim() : '';
+    if (t && t.length > 1 && t.length < 600) showLookup(t);
+  });
 
   $('#wordList').innerHTML = (cur.words || []).map(x =>
     `<div class="wordrow ${DB.words[x.w] ? 'hit' : ''}" data-w="${esc(x.w)}"><b>${esc(x.w)}</b><span>${esc(x.p || '')} ${esc(x.zh || '')}</span></div>`
@@ -1616,6 +1667,7 @@ document.addEventListener('mouseup', e => {
       b.hidden = false;
       b.style.left = Math.max(10, Math.min(window.innerWidth - 130, r.left + r.width / 2 - 60)) + 'px';
       b.style.top = Math.max(10, r.top - 46) + 'px';
+      speakText(t); // 划到哪里，读到哪
     } else hideMarkBtn();
   }, 0);
 });
@@ -1631,7 +1683,68 @@ $('#markBtn').onclick = () => {
   window.getSelection().removeAllRanges();
   toast('已收进摘抄本 · +2 XP');
 };
-document.addEventListener('mousedown', e => { if (!e.target.closest || !e.target.closest('#markBtn')) hideMarkBtn(); });
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest || !e.target.closest('#markBtn')) hideMarkBtn();
+  if (!e.target.closest || !e.target.closest('#lkPop')) { const p = $('#lkPop'); if (p) p.hidden = true; }
+});
+
+/* ---------------- 双击查词 / 查句（浮窗） ---------------- */
+let lkText = '', lkToken = 0;
+function showLookup(t) {
+  const pop = $('#lkPop');
+  if (!pop) return;
+  const isWord = /^[A-Za-z'’-]+$/.test(t);
+  const w = isWord ? t.toLowerCase() : '';
+  let zh = '', ph = '';
+  if (w) {
+    const inArt = (cur && cur.words || []).find(x => x.w === w);
+    const rec = DB.words[w];
+    zh = (inArt && inArt.zh) || (rec && rec.zh) || glossOf(w);
+    ph = (rec && rec.ph) || phOf(w);
+  }
+  lkText = t;
+  lkToken++;
+  $('#lkEn').textContent = t;
+  $('#lkPh').textContent = ph ? '/' + String(ph).replace(/^\/+|\/+$/g, '') + '/' : '';
+  $('#lkZh').innerHTML = zh ? esc(zh) : '<span class="lk-wait">查询中…</span>';
+  pop.hidden = false;
+  let r = null;
+  try { r = window.getSelection().getRangeAt(0).getBoundingClientRect(); } catch (e) { }
+  if (!r || (!r.width && !r.height)) r = { left: window.innerWidth / 2, top: window.innerHeight / 2, width: 0, height: 0 };
+  pop.style.left = Math.max(10, Math.min(window.innerWidth - 280, r.left + r.width / 2 - 130)) + 'px';
+  pop.style.top = Math.max(10, r.bottom + 8) + 'px';
+  if (!zh) aiLookup(t, isWord);
+}
+async function aiLookup(t, isWord) {
+  const c = DB.config;
+  const tok = lkToken;
+  if (!c.apiKey) {
+    if (tok === lkToken) $('#lkZh').innerHTML = '<span class="lk-wait">本地没有这条释义；在设置里填上 AI Key 即可即时翻译</span>';
+    return;
+  }
+  const ctx = cur && cur._sents ? (cur._sents.find(x => x.en && x.en.indexOf(t.split(/\s+/)[0]) >= 0) || {}).en : '';
+  const sys = isWord
+    ? '你是英汉词典。给出英文单词在给定语境中的中文释义，格式如「v. 意思；释义」。只输出这一行，不要其它任何内容。'
+    : '你是翻译。把英文翻译成流畅自然的中文，只输出译文本身。';
+  const user = isWord ? ('单词：' + t + (ctx ? '\n所在句子：' + ctx : '')) : t;
+  const res = await window.studio.chat({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model, maxTokens: 200, temperature: 0.3, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] });
+  if (tok !== lkToken) return;
+  const zhEl = $('#lkZh');
+  if (!zhEl) return;
+  if (res.ok) {
+    const out = String(res.content || '').trim().split('\n')[0].slice(0, 300) || '没查到';
+    zhEl.textContent = out;
+    // 学到的释义顺手存进词书（只补空缺，不新建）
+    if (isWord) {
+      const w = t.toLowerCase();
+      if (DB.words[w] && !DB.words[w].zh) { DB.words[w].zh = out; save(); }
+    }
+  } else {
+    zhEl.innerHTML = '<span class="lk-wait">查询失败：' + esc(String(res.error || '').slice(0, 60)) + '</span>';
+  }
+}
+$('#lkSpk').onclick = () => { if (lkText) speakText(lkText); };
+$('#lkClose').onclick = () => { $('#lkPop').hidden = true; };
 
 function renderMarks() {
   const list = (DB.progress.marks || []).slice().sort((a, b) => b.ts - a.ts);

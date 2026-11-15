@@ -663,3 +663,19 @@ textarea{border-radius:10px;border-color:#E5DCCB;background:#FFFDF8;font-family:
   color:#C8C2B6;font-size:15px;cursor:pointer;line-height:1;
 }
 .mk-del:hover{color:var(--red);background:#FBEFEC;border-color:#F0CFC5}
+
+/* ---------- 双击查词浮窗 ---------- */
+.lk-pop{
+  position:fixed;z-index:60;width:264px;
+  background:#FFFDF8;border:1px solid #D9CFB8;border-radius:12px;
+  box-shadow:0 6px 24px rgba(45,38,25,.18);padding:13px 15px 11px;
+}
+.lk-pop .lk-en{display:flex;align-items:center;gap:7px;font-family:var(--serif);font-size:15.5px;color:var(--ink)}
+.lk-pop .lk-en b{font-weight:600;letter-spacing:.01em}
+.lk-ph{font-size:11.5px;color:#B5AFA4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lk-spk{border:none;background:transparent;cursor:pointer;padding:3px;display:flex;align-items:center;flex:none}
+.lk-spk:hover{opacity:.65}
+.lk-zh{margin-top:8px;font-size:13px;line-height:1.65;color:#5E584E;border-top:1px solid #EFE9DC;padding-top:8px}
+.lk-wait{color:#B5AFA4;font-size:12px}
+.lk-x{position:absolute;top:5px;right:9px;border:none;background:transparent;color:#C8C2B6;cursor:pointer;font-size:15px;line-height:1}
+.lk-x:hover{color:var(--red)}
