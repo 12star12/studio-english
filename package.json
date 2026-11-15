@@ -2,6 +2,7 @@
   "name": "cet6-studio",
   "version": "1.0.0",
   "description": "Studio - AI English reading trainer (Electron desktop app)",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
