@@ -24,10 +24,10 @@ const DEFAULT_DB = {
     provider: 'zhipu', baseUrl: PROVIDERS.zhipu.baseUrl, apiKey: '', model: PROVIDERS.zhipu.model,
     interests: ['金融与商业', '科技', '艺术', '文学'],
     length: 250, topic: 'auto', accent: 'en-US', rate: 1, voice: 'en-US-AriaNeural',
-    steps: { listen: true, guess: true, train: true }, order: 'listen'
+    steps: { listen: true, guess: true, train: true }, order: 'read', cfgV: 2
   },
   articles: [], words: {}, books: [],
-  progress: { xp: 0, listenLog: [], readLog: [], guessLog: [], days: {}, doneIds: [], trans: '', coll: '', achievements: {} }
+  progress: { xp: 0, listenLog: [], readLog: [], guessLog: [], days: {}, doneIds: [], trans: '', coll: '', achievements: {}, marks: [] }
 };
 
 let DB = JSON.parse(JSON.stringify(DEFAULT_DB));
@@ -79,6 +79,8 @@ async function boot() {
     DB = Object.assign(JSON.parse(JSON.stringify(DEFAULT_DB)), data);
     DB.config = Object.assign({}, DEFAULT_DB.config, data.config || {});
     DB.progress = Object.assign({}, DEFAULT_DB.progress, data.progress || {});
+    // 一次性迁移：老数据里 order 是旧默认 listen（从未被主动选过）——按用户意愿改为先读后听
+    if (!DB.config.cfgV) { DB.config.order = 'read'; DB.config.cfgV = 2; save(); }
   }
   renderHome();
   renderSideLevel();
@@ -111,12 +113,13 @@ function renderSideLevel() {
 /* ---------------- 视图 ---------------- */
 function go(v) {
   stopAudio();
-  ['home', 'listen', 'read', 'guess', 'train', 'done', 'library', 'words', 'growth', 'settings']
+  ['home', 'listen', 'read', 'guess', 'train', 'done', 'library', 'words', 'marks', 'growth', 'settings']
     .forEach(k => { const el = $('#v-' + k); if (el) el.hidden = k !== v; });
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === v));
   if (v === 'library') renderLibrary();
   if (v === 'guess') renderGuess();
   if (v === 'words') renderWords();
+  if (v === 'marks') renderMarks();
   if (v === 'growth') renderGrowth();
   if (v === 'settings') renderSettings();
   if (v === 'home') renderHome();
@@ -607,6 +610,17 @@ function updateFlowUI() {
   $('#skipListen').textContent = nextStep('listen') === 'read' ? '不想做题，直接看原文 →' : '不想做题，直接进行下一步 →';
   // 阅读页主按钮
   $('#toGuess').textContent = ctaFor('read');
+  // 阅读页快捷切换听力顺序
+  const ob = $('#ordToggle');
+  if (ob) {
+    ob.textContent = '顺序 · ' + (DB.config.order === 'read' ? '先读后听' : '先听后读');
+    ob.title = '点击切换：听力放在阅读前还是后';
+    ob.onclick = () => {
+      DB.config.order = DB.config.order === 'read' ? 'listen' : 'read';
+      save(); updateFlowUI();
+      toast(DB.config.order === 'read' ? '已切换：先读文章，再听朗读' : '已切换：先听朗读，再看原文');
+    };
+  }
 }
 
 function openArticle(a) {
@@ -1566,6 +1580,94 @@ function renderSettings() {
     save();
   });
   window.studio.dataDir().then(d => { const el = $('#dataDir'); if (el) el.textContent = d; });
+}
+
+/* ---------------- 摘抄（划词收藏好词好句） ---------------- */
+let selText = '';
+function hideMarkBtn() { $('#markBtn').hidden = true; }
+document.addEventListener('mouseup', e => {
+  if (e.target.closest && e.target.closest('#markBtn')) return;
+  setTimeout(() => {
+    const s = window.getSelection();
+    const inside = s && !s.isCollapsed && s.anchorNode && $('#artBody').contains(s.anchorNode) && !$('#v-read').hidden;
+    const t = s ? String(s).trim() : '';
+    if (inside && t.length > 1 && t.length < 600) {
+      selText = t;
+      const r = s.getRangeAt(0).getBoundingClientRect();
+      const b = $('#markBtn');
+      b.hidden = false;
+      b.style.left = Math.max(10, Math.min(window.innerWidth - 130, r.left + r.width / 2 - 60)) + 'px';
+      b.style.top = Math.max(10, r.top - 46) + 'px';
+    } else hideMarkBtn();
+  }, 0);
+});
+$('#markBtn').onclick = () => {
+  const t = selText.trim();
+  if (!t) return;
+  if (!DB.progress.marks) DB.progress.marks = [];
+  if (DB.progress.marks.some(m => m.text === t)) { toast('这句已经在摘抄本里了'); hideMarkBtn(); window.getSelection().removeAllRanges(); return; }
+  DB.progress.marks.push({ id: 'mk' + Date.now(), text: t, from: cur ? cur.title : '', date: TODAY, ts: Date.now() });
+  DB.progress.xp = (DB.progress.xp || 0) + 2;
+  save();
+  hideMarkBtn();
+  window.getSelection().removeAllRanges();
+  toast('已收进摘抄本 · +2 XP');
+};
+document.addEventListener('mousedown', e => { if (!e.target.closest || !e.target.closest('#markBtn')) hideMarkBtn(); });
+
+function renderMarks() {
+  const list = (DB.progress.marks || []).slice().sort((a, b) => b.ts - a.ts);
+  const box = $('#marksBody');
+  if (!list.length) {
+    box.innerHTML = `<div class="coll-empty">
+      <div class="ce-t">摘抄本还是空的</div>
+      <div class="ce-s">读文章的时候，遇到喜欢的好词好句，用鼠标划选它——<br>会弹出「收进摘抄本」，一句话 +2 XP。</div>
+      <button class="btn b" data-go="home">去读今天这篇</button>
+    </div>`;
+    return;
+  }
+  box.innerHTML = `
+  <div class="mk-sum">
+    <span>共 ${list.length} 条摘抄</span>
+    <button class="btn sm" id="mkCopy">复制全部</button>
+    <button class="btn sm" id="mkExport">导出 txt</button>
+  </div>
+  <div class="mk-list">` + list.map(m => `
+    <div class="mk-card" data-id="${m.id}">
+      <div class="mk-text">${esc(m.text)}</div>
+      <div class="mk-meta">
+        <span>《${esc(m.from || '未命名')}》 · ${m.date || ''}</span>
+        <button class="mk-del" title="删除">×</button>
+      </div>
+    </div>`).join('') + `</div>`;
+  $('#mkCopy').onclick = () => {
+    const txt = list.map(m => m.text + '\n—— 《' + (m.from || '') + '》 ' + (m.date || '')).join('\n\n');
+    copyText(txt);
+  };
+  $('#mkExport').onclick = () => {
+    const txt = list.map(m => m.text + '\n—— 《' + (m.from || '') + '》 ' + (m.date || '')).join('\n\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain;charset=utf-8' }));
+    a.download = 'studio-marks-' + TODAY + '.txt';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  $$('#marksBody .mk-del').forEach(b => b.onclick = () => {
+    const id = b.closest('.mk-card').dataset.id;
+    DB.progress.marks = DB.progress.marks.filter(m => m.id !== id);
+    save(); renderMarks(); toast('已删除');
+  });
+}
+function copyText(txt) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(() => toast('已复制到剪贴板')).catch(() => copyTextFallback(txt));
+  } else copyTextFallback(txt);
+}
+function copyTextFallback(txt) {
+  const ta = document.createElement('textarea');
+  ta.value = txt; document.body.appendChild(ta);
+  ta.select(); document.execCommand('copy'); ta.remove();
+  toast('已复制到剪贴板');
 }
 
 /* ---------------- 小工具 ---------------- */

@@ -29,6 +29,7 @@
     <a data-v="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/></svg>今日</a>
     <a data-v="library"><svg viewBox="0 0 24 24"><path d="M4 4h5v16H4zM11 4h4v16h-4zM17 5l3.5 15-3.8.9L13 6z"/></svg>文库</a>
     <a data-v="words"><svg viewBox="0 0 24 24"><path d="M12 6.5C10 4.8 7 4 4 4v14c3 0 6 .8 8 2.5 2-1.7 5-2.5 8-2.5V4c-3 0-6 .8-8 2.5z"/><path d="M12 6.5V20"/></svg>词书</a>
+    <a data-v="marks"><svg viewBox="0 0 24 24"><path d="M7 3h10a1 1 0 0 1 1 1v17l-6-4.5L6 21V4a1 1 0 0 1 1-1z"/><path d="M9.5 8h5M9.5 11.5h5"/></svg>摘抄</a>
     <a data-v="growth"><svg viewBox="0 0 24 24"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></svg>成长</a>
     <a data-v="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.5 12a7.5 7.5 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7.5 7.5 0 0 0-2-1.2L14.8 3H9.2l-.3 2.5a7.5 7.5 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5a7.5 7.5 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-.9a7.5 7.5 0 0 0 2 1.2l.3 2.5h5.6l.3-2.5a7.5 7.5 0 0 0 2-1.2l2.3.9 2-3.4-2-1.5c.06-.4.1-.8.1-1.2z"/></svg>设置</a>
   </nav>
@@ -230,6 +231,7 @@
     <button class="btn sm" id="readPlay">▶ 全文朗读</button>
     <select class="sel mini" id="readRate"><option value="0.85">0.85×</option><option value="1" selected>1.0×</option><option value="1.15">1.15×</option><option value="1.3">1.3×</option></select>
     <button class="btn sm" id="zhToggle">中 / En</button>
+    <button class="btn sm" id="ordToggle">顺序 · 先读后听</button>
   </div>
   <div class="read-grid">
     <div class="card article">
@@ -344,6 +346,12 @@
   <div id="wordsBody"></div>
 </section>
 
+<!-- ============ MARKS ============ -->
+<section id="v-marks" hidden>
+  <div class="bar"><button class="back" data-go="home">← 返回</button><h2>摘抄</h2></div>
+  <div id="marksBody"></div>
+</section>
+
 <!-- ============ GROWTH ============ -->
 <section id="v-growth" hidden>
   <div class="bar"><button class="back" data-go="home">← 返回</button><h2>成长</h2></div>
@@ -386,6 +394,10 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<button class="mark-btn" id="markBtn" hidden>
+  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  收进摘抄本
+</button>
 <div class="ach-pop" id="achPop" hidden></div>
 
 <input type="file" id="bookFile" accept=".txt,.csv,.tsv" hidden>

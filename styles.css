@@ -635,3 +635,31 @@ textarea{border-radius:10px;border-color:#E5DCCB;background:#FFFDF8;font-family:
   font-family:var(--serif);font-size:13px;color:#B3A992;line-height:1.9;
   padding:14px 0 4px;letter-spacing:.02em;
 }
+
+/* ---------- 摘抄（划词收藏） ---------- */
+#artBody ::selection{background:#F1E6C8}
+.mark-btn{
+  position:fixed;z-index:50;display:flex;align-items:center;gap:5px;
+  padding:7px 14px;border-radius:10px;border:1px solid #D9CFB8;
+  background:#FFFDF8;color:#6B5B33;font:inherit;font-size:12.5px;font-weight:500;
+  cursor:pointer;box-shadow:0 4px 16px rgba(45,38,25,.14);
+}
+.mark-btn:hover{background:#FBF6E9;border-color:#A8823F}
+.mk-sum{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#94897A;margin-bottom:12px}
+.mk-sum span{flex:1}
+.mk-list{display:flex;flex-direction:column;gap:10px}
+.mk-card{
+  background:var(--card);border:1px solid var(--line);border-left:3px solid var(--gold);
+  border-radius:12px;padding:16px 18px 12px;box-shadow:var(--sh);
+}
+.mk-text{
+  font-family:var(--serif);font-size:14.5px;line-height:1.8;color:var(--ink);
+  letter-spacing:.01em;white-space:pre-wrap;
+}
+.mk-meta{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.mk-meta span{font-size:11px;color:#B5AFA4}
+.mk-del{
+  width:24px;height:24px;border-radius:8px;border:1px solid transparent;background:transparent;
+  color:#C8C2B6;font-size:15px;cursor:pointer;line-height:1;
+}
+.mk-del:hover{color:var(--red);background:#FBEFEC;border-color:#F0CFC5}
