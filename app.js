@@ -193,6 +193,7 @@ function renderToday() {
 
 function genFormHTML() {
   const LEN = [
+    { n: 100, t: '超短', d: '一分钟' },
     { n: 150, t: '短', d: '碎片时间' },
     { n: 250, t: '中', d: '日常一篇' },
     { n: 400, t: '长', d: '深度阅读' }
@@ -375,10 +376,15 @@ function buildPrompt() {
   const len = c.length;
   const topic = c.topic === 'auto' ? '你自己挑一个最适合今天读的方向' : c.topic;
   // 尽量多用词书里的词，但句子自然度优先
-  const nWords = len <= 180 ? 10 : len <= 320 ? 14 : 18;
+  const nWords = len <= 120 ? 8 : len <= 180 ? 10 : len <= 320 ? 14 : 18;
   const needWords = Math.max(5, nWords - 5);
   const words = pickWords(nWords);
   const minW = Math.round(len * 0.88), maxW = Math.round(len * 1.12);
+  const tiny = len <= 120;
+  const paraRule = tiny ? '写 3 段，每段正好 3 个句子，全文一共 9 句。' : '写 4 段，每段 3–4 个句子。';
+  const sentRule = tiny
+    ? '每个英文句子 13–16 个词（往长了写，宁可超不可短）。写完必须数总词数：不足 88 就补细节，超过 112 就删修饰。'
+    : '每个英文句子必须写够 18–25 个词，用从句、非谓语结构、插入语把意思说完整。\n不要写 "Art is important." 这种短句；六级阅读里的句子本来就是长的。';
   return {
     words, minW, maxW,
     messages: [
@@ -395,9 +401,8 @@ function buildPrompt() {
 兴趣方向：${topic}
 字数是最重要的一条，比其它所有要求都重要：
 正文总词数必须在 ${minW}–${maxW} 词之间。
-写法：写 4 段，每段 3–4 个句子。
-每个英文句子必须写够 18–25 个词，用从句、非谓语结构、插入语把意思说完整。
-不要写 "Art is important." 这种短句；六级阅读里的句子本来就是长的。
+写法：${paraRule}
+${sentRule}
 写完数一遍总词数，不足 ${minW} 就补一个具体例子或一层解释进去。
 
 难度：六级水平，但必须自然好读，不能为了难而难。
@@ -411,6 +416,7 @@ function buildPrompt() {
 - 每个句子单独作为一个数组元素，方便逐句朗读。
 
 只输出这个结构的 JSON：
+注意：paras 的每一项必须是 {"en": ["句子", ...], "zh": "整段中文"} 这样的对象，不要把段落写成嵌套数组。
 {
   "title": "英文标题（不超过 8 个词）",
   "topic": "两个汉字以内的主题标签",
@@ -448,6 +454,13 @@ function normalize(obj) {
   if (!obj || !Array.isArray(obj.paras) || !obj.paras.length) throw new Error('缺少 paras');
   let count = 0;
   obj.paras = obj.paras.map(p => {
+    // 模型偶尔把段落输出成数组：[{en,zh},...] 或 ["句子",...]，都拍平
+    if (Array.isArray(p)) {
+      const en = p.map(x => typeof x === 'string' ? x : String(x.en || '').trim()).filter(Boolean);
+      count += en.join(' ').split(/\s+/).filter(Boolean).length;
+      const zh = p.map(x => typeof x === 'string' ? '' : String(x.zh || '')).filter(Boolean).join(' ');
+      return { en, zh };
+    }
     const en = Array.isArray(p.en) ? p.en : String(p.en || '').split(/(?<=[.!?])\s+/);
     const clean = en.map(s => String(s).trim()).filter(Boolean);
     count += clean.join(' ').split(/\s+/).length;
@@ -504,24 +517,29 @@ async function generate() {
     if (retry.ok) { try { data = normalize(parseJSON(retry.content)); } catch (e2) { errMsg = e2.message; } }
   }
 
-  if (data && data.len < minW * 0.85) {
-    const r2 = await window.studio.chat({
-      baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model, temperature: 0.75, maxTokens: 4096,
-      messages: messages.concat([
-        { role: 'assistant', content: res.content.slice(0, 4000) },
-        { role: 'user', content: `这篇只有 ${data.len} 个词，太短了，达不到 ${minW}–${maxW} 词。请以它为基础重写一遍：
+  // 太短就自动补长重写，最多两轮，只接受"更接近目标词数"的结果（防补过头）
+  if (data) {
+    const cut = DB.config.length <= 120 ? 0.95 : 0.85;
+    const target = DB.config.length;
+    for (let att = 0; att < 2 && data.len < minW * cut; att++) {
+      const r2 = await window.studio.chat({
+        baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model, temperature: 0.75, maxTokens: 4096,
+        messages: messages.concat([
+          { role: 'assistant', content: res.content.slice(0, 4000) },
+          { role: 'user', content: `这篇只有 ${data.len} 个词，太短了，达不到 ${minW}–${maxW} 词。请以它为基础重写一遍：
 - 保留原来的主题、观点和已用到的目标词
 - 每段补充具体的例子、数据、因果解释或反例，让内容真的有信息量
 - 不要注水，不要重复同一层意思，不要靠形容词凑字数
 - 总词数必须落在 ${minW}–${maxW} 之间
 只输出完整的 JSON，结构完全不变。` }
-      ])
-    });
-    if (r2.ok) {
-      try {
-        const d2 = normalize(parseJSON(r2.content));
-        if (d2.len > data.len) data = d2;
-      } catch (e) { }
+        ])
+      });
+      if (r2.ok) {
+        try {
+          const d2 = normalize(parseJSON(r2.content));
+          if (Math.abs((d2.len || 0) - target) < Math.abs(data.len - target)) data = d2;
+        } catch (e) { }
+      }
     }
   }
 

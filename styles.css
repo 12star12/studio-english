@@ -83,7 +83,7 @@ body{
 
 /* ---------- 生成区 ---------- */
 .gen-empty{flex:1;display:flex;flex-direction:column;justify-content:center;gap:14px}
-.len-row{display:flex;gap:9px}
+.len-row{display:flex;gap:9px;flex-wrap:wrap}
 .len-opt{
   flex:1;border:1px solid var(--line);border-radius:12px;padding:11px 12px;cursor:pointer;
   transition:.15s;background:#FDFCFA;
