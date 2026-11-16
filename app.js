@@ -391,6 +391,15 @@ function buildPrompt() {
   const sentRule = tiny
     ? '每个英文句子 13–16 个词（往长了写，宁可超不可短）。写完必须数总词数：不足 88 就补细节，超过 112 就删修饰。'
     : '每个英文句子必须写够 18–25 个词，用从句、非谓语结构、插入语把意思说完整。\n不要写 "Art is important." 这种短句；六级阅读里的句子本来就是长的。';
+  // 主题锚定：模型很容易滑回商业/创业题材，经济类尤其要按用户的口径写
+  const topicRule = c.topic === 'auto'
+    ? '方向你自己挑（文学、历史、科技、经济学科普、心理等都可以轮换），但今天只写一个方向，写透。'
+    : /金融|商业|经济|量化|投资/.test(c.topic)
+      ? `文章必须属于「${topic}」，并按下面的口径写：
+- 写宏观/微观经济学的概念科普（如通胀、利率、供需、弹性、机会成本、博弈、外部性）或量化方法的科普（数据、概率、因子、回测、统计思维），用生活化的例子把概念讲透，让读者读完真的理解一个经济学概念或一种量化思想
+- 严禁写成商业新闻、公司案例、创业故事、行业报道——读者不想看商业故事，想看的是经济学本身的原理
+- 文章里的叙事（如果有）只是引出概念的载体`
+      : `文章必须紧扣「${topic}」这个方向：题材、人物、例子都要服务它。不要滑到商业/创业/公司题材，除非用户选的方向就是它。`;
   return {
     words, minW, maxW,
     messages: [
@@ -404,7 +413,7 @@ function buildPrompt() {
 `写一篇英文短文，并配套练习。严格按下面要求。
 
 读者：中国大学生，计算机专业，正在准备六级，但不喜欢应试材料，喜欢有真实信息量的内容。
-兴趣方向：${topic}
+${topicRule}
 字数是最重要的一条，比其它所有要求都重要：
 正文总词数必须在 ${minW}–${maxW} 词之间。
 写法：${paraRule}
@@ -420,6 +429,11 @@ ${sentRule}
 - 要有真实的信息价值或文学性。不要写"随着社会发展"这种空洞开头。
 - 不要为了塞词而生硬拼接句子。
 - 每个句子单独作为一个数组元素，方便逐句朗读。
+
+出题自查（做完必须逐条核对）：
+- listening 和 reading 的 a 必须指向"与 exp 解析一致"的选项：解析里提到的数字、事实、结论，必须就是 opts[a] 那一项的内容。写完一题就核对一题，这是最容易出错的地方。
+- exp 一律用中文写（引述原文依据时可以带英文短语）。
+- 正确答案四个位置都要用到，不要都挤在同一个字母上。
 
 只输出这个结构的 JSON：
 注意：paras 的每一项必须是 {"en": ["句子", ...], "zh": "整段中文"} 这样的对象，不要把段落写成嵌套数组。
@@ -488,7 +502,19 @@ function fixQ(q) {
   let a = Math.round(Number(q.a));
   // 下标越界：模型常把 1-based 序号当 0-based 下标（4 个选项给 a=4）→ 按 0-based 收进去
   if (!(a >= 0 && a < opts.length)) a = a === opts.length ? opts.length - 1 : Math.min(Math.max(0, a), opts.length - 1);
-  return { q: String(q.q), opts, a, exp: String(q.exp || '') };
+  // 自洽性校正：模型偶尔把 a 标错——解析里写"making it 100 years old"，正确选项却是"50 years"。
+  // 若解析文本恰好只命中一个选项的内容，以解析为准改判。
+  const exp = String(q.exp || '');
+  if (exp) {
+    const low = exp.toLowerCase();
+    const hits = [];
+    opts.forEach((o, i) => {
+      const core = o.replace(/^\s*[A-Da-d][.、:：]\s*/, '').trim().toLowerCase();
+      if (core.length >= 2 && low.includes(core)) hits.push(i);
+    });
+    if (hits.length === 1 && hits[0] !== a) a = hits[0];
+  }
+  return { q: String(q.q), opts, a, exp };
 }
 
 async function generate() {
@@ -1605,7 +1631,7 @@ function renderSettings() {
       <h2>兴趣</h2>
       <p class="lead">AI 会从这里选题。点一下切换，可以多选。</p>
       <div class="topic-row" id="interestRow">
-        ${['金融与商业', '科技', '艺术', '文学', '历史', '科学', '心理', '社会'].map(t =>
+        ${['金融与商业', '经济学', '量化', '科技', '艺术', '文学', '历史', '科学', '心理', '社会'].map(t =>
     `<div class="topic ${c.interests.includes(t) ? 'on' : ''}" data-t="${t}">${t}</div>`).join('')}
       </div>
     </div>
