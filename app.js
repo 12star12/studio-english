@@ -400,6 +400,17 @@ function buildPrompt() {
 - 严禁写成商业新闻、公司案例、创业故事、行业报道——读者不想看商业故事，想看的是经济学本身的原理
 - 文章里的叙事（如果有）只是引出概念的载体`
       : `文章必须紧扣「${topic}」这个方向：题材、人物、例子都要服务它。不要滑到商业/创业/公司题材，除非用户选的方向就是它。`;
+  // 事实准确性：模型写具体名著时会编造情节（如"《傲慢与偏见》里的农夫"），必须约束
+  const factRule = /文学|艺术|历史|科学|心理|社会/.test(c.topic === 'auto' ? '' : c.topic)
+    ? `事实准确性（最高优先级之一）：
+- 如果提到具体的作品、作家、历史事件或科学事实，只能写广为人知、确凿无误的内容。宁可少写具体细节，也不要编造——例如不要给《傲慢与偏见》安插原著里没有的农夫角色或情节。
+- 不确定某个细节是否真实时，改写这个方向本身的主题、读法、影响，不要虚构人物、场景、数字或事件。
+- 更安全的写法：谈这类主题时写"人们如何读它/它为什么重要/它的主题思想"，而不是复述具体情节。`
+    : '';
+  // 段落分工：模型爱把同一层意思换个说法重复一遍
+  const structureRule = `
+段落分工（防重复）：每一段必须推进一层新的意思——第 1 段引出话题并给出核心判断，中间各段分别展开不同的原因/例子/反面，最后一段收束或给出新的启示。
+严禁把同一观点换词重复（比如反复说"Technology changes the world"）；写完通读一遍，删掉意思重复的段落或句子，用新的信息替换。`;
   return {
     words, minW, maxW,
     messages: [
@@ -414,6 +425,8 @@ function buildPrompt() {
 
 读者：中国大学生，计算机专业，正在准备六级，但不喜欢应试材料，喜欢有真实信息量的内容。
 ${topicRule}
+${factRule}
+${structureRule}
 字数是最重要的一条，比其它所有要求都重要：
 正文总词数必须在 ${minW}–${maxW} 词之间。
 写法：${paraRule}
@@ -1223,16 +1236,28 @@ function renderTrain() {
   const r = cur.reading || { q: '', opts: [], a: 0, exp: '' };
   $('#rq').textContent = r.q;
   $('#ropts').innerHTML = (r.opts || []).map((o, i) =>
-    `<label class="opt" data-i="${i}"><input type="radio" name="rq">${esc(o)}</label>`).join('');
+    `<label class="opt" data-i="${i}"><input type="radio" name="rq" value="${i}">${esc(o)}</label>`).join('');
   $('#rAns').hidden = true; $('#tAns').hidden = true; $('#cAns').hidden = true;
+  // 恢复已答的阅读题：选中项、对错标色、解析
+  if (cur._rDone && cur._rPick >= 0) {
+    const radio = $('#ropts input[value="' + cur._rPick + '"]');
+    if (radio) radio.checked = true;
+    $$('#ropts .opt').forEach((el, k) => {
+      if (k === r.a) el.classList.add('right');
+      else if (k === cur._rPick) el.classList.add('wrong');
+    });
+    $('#rAns').hidden = false;
+    $('#rAns').innerHTML = `<b>${cur._rPick === r.a ? '答对了' : '正确是 ' + String.fromCharCode(65 + r.a)}</b><br>${esc(r.exp || '')}`;
+  }
 
   const t = cur.translation || {};
   $('#tq').textContent = t.en || '';
-  $('#tInput').value = DB.progress.trans || '';
+  // 草稿按文章存，首次打开是空的——不要把答案或别的文章写过的东西预填进去
+  $('#tInput').value = cur._tDraft || '';
 
   const c = cur.collocation || {};
   $('#cq').innerHTML = `用 <b style="color:#C67C2A">"${esc(c.ph || '')}"</b> 造一个句子<div style="font-size:11.5px;color:var(--sub);margin-top:5px">${esc(c.zh || '')}</div>`;
-  $('#cInput').value = DB.progress.coll || '';
+  $('#cInput').value = cur._cDraft || '';
 }
 $('#rSubmit').onclick = () => {
   const sel = $('#ropts input:checked');
@@ -1241,7 +1266,9 @@ $('#rSubmit').onclick = () => {
   $$('#ropts .opt').forEach((el, k) => { if (k === a) el.classList.add('right'); else if (k === i) el.classList.add('wrong'); });
   if (!cur._rDone) {
     cur._rDone = true;
-    DB.progress.readLog.push(i === a ? 1 : 0);
+    cur._rPick = i;
+    cur._rRight = i === a ? 1 : 0;
+    DB.progress.readLog.push(cur._rRight);
     save();
   }
   $('#rAns').hidden = false;
@@ -1253,8 +1280,8 @@ $('#rShow').onclick = () => {
   $('#rAns').hidden = false;
   $('#rAns').innerHTML = `<b>答案 ${String.fromCharCode(65 + a)}</b><br>${esc(cur.reading.exp || '')}`;
 };
-$('#tInput').oninput = e => { DB.progress.trans = e.target.value; save(); };
-$('#cInput').oninput = e => { DB.progress.coll = e.target.value; save(); };
+$('#tInput').oninput = e => { if (cur) { cur._tDraft = e.target.value; save(); } };
+$('#cInput').oninput = e => { if (cur) { cur._cDraft = e.target.value; save(); } };
 $('#tSubmit').onclick = () => {
   if (!$('#tInput').value.trim()) { toast('先写一句'); return; }
   const t = cur.translation || {};
@@ -1278,10 +1305,9 @@ $('#toDone').onclick = () => {
   const acc = ll.length ? ll.reduce((a, b) => a + b, 0) / ll.length : 0;
   const hasT = !!($('#tInput').value || '').trim();
   const hasC = !!($('#cInput').value || '').trim();
-  const rl = DB.progress.readLog.slice(-1);
-  const rAcc = rl.length ? rl[0] : 0;
+  const rAcc = cur._rRight || 0;  // 本篇阅读结果，不是全局最后一条
 
-  let gain = 40 + Math.round(acc * 35) + (rAcc ? 18 : 0) + (hasT ? 12 : 0) + (hasC ? 18 : 0) + Math.round(cur.len / 400 * 20);
+  let gain = 40 + Math.round(acc * 35) + (cur._rDone ? (rAcc ? 18 : 9) : 0) + (hasT ? 12 : 0) + (hasC ? 18 : 0) + Math.round(cur.len / 400 * 20);
   const first = !cur.done;
   if (first) cur.done = true;
   DB.progress.xp += first ? gain : Math.round(gain * 0.3);
@@ -1291,7 +1317,10 @@ $('#toDone').onclick = () => {
   save();
 
   $('#d-listen').textContent = ll.length ? Math.round(acc * 100) + '%' : '—';
-  $('#d-read').textContent = rAcc ? '✓' : '—';
+  // 完成状态看"是否做过"，不是"是否答对"——答错了也算读完这一环
+  const dRead = $('#d-read');
+  dRead.textContent = cur._rDone ? '✓' : '—';
+  dRead.title = cur._rDone ? (rAcc ? '阅读理解答对了' : '阅读理解做过了（答错，已显示解析）') : '还没做阅读理解';
   $('#d-trans').textContent = hasT ? '✓' : '—';
   $('#d-coll').textContent = hasC ? '✓' : '—';
   $('#xpGain').textContent = '+' + (first ? gain : Math.round(gain * 0.3)) + ' XP' + (first ? '' : '（复习）');
