@@ -5,7 +5,7 @@ const fs = require('fs');
 app.disableHardwareAcceleration();
 
 const db = JSON.parse(fs.readFileSync(path.join(process.env.APPDATA, 'cet6-studio', 'data.json'), 'utf8'));
-const KEY = db.config.apiKey, BASE = db.config.baseUrl, MODEL = db.config.model;
+const KEY = db.config.apiKey, BASE = db.config.baseUrl, MODEL = process.env.SMOKE_MODEL || db.config.model;
 
 async function chat(messages) {
   const r = await fetch(BASE.replace(/\/+$/, '') + '/chat/completions', {
@@ -14,6 +14,7 @@ async function chat(messages) {
     body: JSON.stringify({ model: MODEL, messages, temperature: 0.85, max_tokens: 4096 })
   });
   const j = await r.json();
+  if (!r.ok || !j.choices) console.error('API 错误:', r.status, JSON.stringify(j).slice(0, 300));
   return j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : null;
 }
 
