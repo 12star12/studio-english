@@ -30,8 +30,8 @@ const api = async (path, opt = {}) => {
   const baseCommit = await api(`/repos/${REPO}/git/commits/${baseSha}`);
   console.log('远端 main:', baseSha.slice(0, 8));
 
-  // 2. 本地相对远端的文件变化
-  const changes = execSync('git diff --name-status origin/main..main', { encoding: 'utf8' })
+  // 2. 本地相对远端的文件变化（core.quotepath=false 保证中文路径不被转义）
+  const changes = execSync('git -c core.quotepath=false diff --name-status origin/main..main', { encoding: 'utf8' })
     .trim().split('\n').filter(Boolean).map(l => {
       const m = l.match(/^([AMDR])\s+(.+)$/);
       return { status: m[1], path: m[2] };
@@ -60,11 +60,10 @@ const api = async (path, opt = {}) => {
     body: JSON.stringify({ base_tree: baseCommit.tree.sha, tree })
   });
 
-  // 5. 建 commit（消息取本地未推提交的组合）
-  const msgs = execSync('git log --format=%B origin/main..main', { encoding: 'utf8' })
-    .trim().split('\n\n');
-  const message = 'sync: 桌面快捷方式 + 学习环节可开关（先读后听）\n\n'
-    + msgs.map(m => '- ' + m.split('\n')[0]).join('\n');
+  // 5. 建 commit（消息 = 最新一条提交主题 + 全部未推提交列表）
+  const msgs = execSync('git -c core.quotepath=false log --format=%s origin/main..main', { encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean);
+  const message = 'sync: ' + msgs[0] + '\n\n' + msgs.map(m => '- ' + m).join('\n');
   const commit = await api(`/repos/${REPO}/git/commits`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
