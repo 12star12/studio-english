@@ -43,7 +43,7 @@ app.whenReady().then(async () => {
       out.doneMark = document.querySelector('#d-read').textContent;
       // 6. 提示词：事实准确性 + 段落分工
       const p = buildPrompt().messages[1].content;
-      out.factRule = p.includes('傲慢与偏见') && p.includes('事实准确性');
+      out.factRule = p.includes('严禁编造次要人物') && p.includes('事实准确性');
       out.structRule = p.includes('段落分工') && p.includes('严禁把同一观点换词重复');
       return out;
     } catch (e) { return { FATAL: String(e) + ' @ ' + (e.stack||'').split('\\n')[1] }; }
