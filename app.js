@@ -119,12 +119,13 @@ function renderSideLevel() {
 function go(v) {
   stopAudio();
   const lp = $('#lkPop'); if (lp) lp.hidden = true;
-  ['home', 'listen', 'read', 'guess', 'train', 'done', 'library', 'words', 'marks', 'growth', 'settings']
+  ['home', 'listen', 'read', 'guess', 'train', 'done', 'library', 'words', 'study', 'marks', 'growth', 'settings']
     .forEach(k => { const el = $('#v-' + k); if (el) el.hidden = k !== v; });
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === v));
   if (v === 'library') renderLibrary();
   if (v === 'guess') renderGuess();
   if (v === 'words') renderWords();
+  if (v === 'study') renderStudy();
   if (v === 'marks') renderMarks();
   if (v === 'growth') renderGrowth();
   if (v === 'settings') renderSettings();
@@ -522,19 +523,56 @@ function fixQ(q) {
   let a = Math.round(Number(q.a));
   // 下标越界：模型常把 1-based 序号当 0-based 下标（4 个选项给 a=4）→ 按 0-based 收进去
   if (!(a >= 0 && a < opts.length)) a = a === opts.length ? opts.length - 1 : Math.min(Math.max(0, a), opts.length - 1);
-  // 自洽性校正：模型偶尔把 a 标错——解析里写"making it 100 years old"，正确选项却是"50 years"。
-  // 若解析文本恰好只命中一个选项的内容，以解析为准改判。
+  // 自洽性校正：模型偶尔把 a 标错，解析却说出了真正的答案。
   const exp = String(q.exp || '');
   if (exp) {
-    const low = exp.toLowerCase();
-    const hits = [];
-    opts.forEach((o, i) => {
-      const core = o.replace(/^\s*[A-Da-d][.、:：]\s*/, '').trim().toLowerCase();
-      if (core.length >= 2 && low.includes(core)) hits.push(i);
-    });
-    if (hits.length === 1 && hits[0] !== a) a = hits[0];
+    // ① 最高优先级：解析里直接声明答案（"making option B the correct answer" / "正确答案是B"）。
+    //    这类显式声明比 a 下标可靠——AI 经常在 exp 里自己写出正确字母，却把 a 标成别的。
+    const declared = declaredAnswer(exp, opts.length);
+    if (declared >= 0) {
+      a = declared;
+    } else {
+      // ② 次优先：解析整句复述了某个选项的内容（"making it 100 years old" vs "50 years"）。
+      //    只有唯一命中时才改判，避免误伤。
+      const low = exp.toLowerCase();
+      const hits = [];
+      opts.forEach((o, i) => {
+        const core = o.replace(/^\s*[A-Da-d][.、:：]\s*/, '').trim().toLowerCase();
+        if (core.length >= 2 && low.includes(core)) hits.push(i);
+      });
+      if (hits.length === 1) a = hits[0];
+    }
   }
   return { q: String(q.q), opts, a, exp };
+}
+
+// 从解析文本里抽取"显式答案声明"；没有则返回 -1。
+// 覆盖：making option B the correct answer / option B is correct / the correct answer is B /
+//       answer: B / 正确答案是B / 选B。多处声明冲突时取最后一句（通常是结论）。
+function declaredAnswer(exp, n) {
+  const s = String(exp || '');
+  const pats = [
+    /\b(?:making\s+)?(?:option|choice)\s+([A-Da-d])\b[^.]{0,40}?\b(?:correct|right|best)\b/gi,
+    /\b(?:the\s+)?correct\s+(?:answer|option|choice)\s+is\s+(?:option\s+)?([A-Da-d])\b/gi,
+    /\b(?:the\s+)?(?:answer|option|choice)\s+is\s+(?:option\s+)?([A-Da-d])\b/gi,
+    /\b(?:answer|ans|key)\s*[:：]\s*(?:option\s+)?([A-Da-d])\b/gi,
+    /\b([A-Da-d])\s+is\s+(?:the\s+)?(?:correct|right)\b/gi,
+    /正确(?:答案)?\s*(?:是|为)?\s*(?:选项)?\s*([A-Da-d])/gi,
+    /(?:答案|选)\s*[:：]?\s*(?:选项)?\s*([A-Da-d])/gi
+  ];
+  const found = [];
+  pats.forEach(re => {
+    let m;
+    while ((m = re.exec(s))) {
+      // "option A is wrong because B is correct" 里的 A 要排除
+      if (/\b(?:wrong|incorrect|false)\b|不(?:对|正确)/i.test(m[0])) continue;
+      const i = m[1].toUpperCase().charCodeAt(0) - 65;
+      if (i >= 0 && i < n) found.push({ i, pos: m.index });
+    }
+  });
+  if (!found.length) return -1;
+  found.sort((x, y) => x.pos - y.pos);
+  return found[found.length - 1].i;
 }
 
 async function generate() {
@@ -1555,6 +1593,301 @@ function importBook(text, name) {
   BOOK.tab = 'cet6';
   renderWords();
   toast('导入 ' + words.length + ' 个词');
+}
+
+/* ================= 独立背单词（不依赖文章） ================= */
+const STUDY = Object.assign(
+  { phase: 'setup', scope: 'all', n: 12, mode: 'choice', items: [], i: 0, right: 0, saved: false, startedAt: 0 },
+  DB.config.study || {}
+);
+const STUDY_SCOPES = [
+  ['all', '全部词书', '词书里所有带释义的词'],
+  ['mine', '我遇到过的', '在文章里出现过、进过词库的词'],
+  ['learning', '学习中', '拿到 1–2 个勾、还没掌握的词'],
+  ['weak', '错过的小本', '以前猜错过的词'],
+  ['mastered', '复习已掌握', '拿满三个勾的词，回头巩固']
+];
+
+function studyScopes() {
+  const pool = bookPool().filter(x => x.zh);
+  const withRec = k => pool.filter(x => { const r = DB.words[x.w]; return r && k(r); });
+  return {
+    all: pool,
+    mine: withRec(() => true),
+    learning: withRec(r => (r.checks || 0) > 0 && (r.checks || 0) < 3),
+    weak: withRec(r => (r.wrong || 0) > 0),
+    mastered: withRec(r => (r.checks || 0) >= 3)
+  };
+}
+
+function shuffleArr(a) {
+  a = a.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+function startStudy() {
+  const scopes = studyScopes();
+  const src = scopes[STUDY.scope] || scopes.all;
+  if (!src.length) { toast('这个范围里还没有带释义的词'); return; }
+  const distractors = scopes.all;
+  STUDY.items = shuffleArr(src).slice(0, STUDY.n).map(x => {
+    const r = recOf(x.w, x.p, x.zh);
+    const zh = r.zh || x.zh;
+    const used = new Set([zh]), dist = [];
+    let guard = 0;
+    while (dist.length < 3 && guard++ < 600) {
+      const c = distractors[Math.floor(Math.random() * distractors.length)];
+      if (!c || !c.zh || used.has(c.zh)) continue;
+      used.add(c.zh); dist.push(c.zh);
+    }
+    if (dist.length < 3) {
+      ['表示否定的意思', '一个不相关的概念', '另一种常见但不对的解释'].forEach(f => {
+        if (dist.length < 3 && !used.has(f)) { used.add(f); dist.push(f); }
+      });
+    }
+    const opts = shuffleArr([zh, ...dist]);
+    return { w: x.w, ph: r.ph || x.ph || phOf(x.w), p: r.p || x.p || '', zh, opts, a: opts.indexOf(zh), ok: null };
+  });
+  STUDY.i = 0; STUDY.right = 0; STUDY.saved = false;
+  STUDY.startedAt = Date.now(); STUDY.phase = 'play';
+  renderStudy();
+}
+
+function renderStudy() {
+  const box = $('#studyBody');
+  if (!box) return;
+  if (STUDY.phase === 'setup') return renderStudySetup(box);
+  if (STUDY.phase === 'play') return renderStudyPlay(box);
+  renderStudyDone(box);
+}
+
+function renderStudySetup(box) {
+  const scopes = studyScopes();
+  const counts = {};
+  Object.keys(scopes).forEach(k => counts[k] = scopes[k].length);
+  const nOpts = [10, 20, 50];
+  box.innerHTML = `
+    <div class="simple study-setup">
+      <div class="study-hero">
+        <div>
+          <h2>今天背哪些词？</h2>
+          <p class="lead">从词书里挑一组单独背，跟今天有没有读文章没关系。</p>
+        </div>
+        <div class="study-hero-ico">🧠</div>
+      </div>
+      <div class="study-group">
+        <div class="study-label">① 选范围</div>
+        <div class="study-chips">
+          ${STUDY_SCOPES.map(([k, name, desc]) => `
+            <button class="study-chip ${STUDY.scope === k ? 'on' : ''}" data-scope="${k}" ${counts[k] ? '' : 'disabled'}>
+              <b>${name}</b><span>${counts[k]} 个 · ${desc}</span>
+            </button>`).join('')}
+        </div>
+      </div>
+      <div class="study-group">
+        <div class="study-label">② 每组几个</div>
+        <div class="study-chips study-inline">
+          ${nOpts.map(n => `<button class="study-pill ${STUDY.n === n ? 'on' : ''}" data-n="${n}">${n} 个</button>`).join('')}
+        </div>
+      </div>
+      <div class="study-group">
+        <div class="study-label">③ 怎么背</div>
+        <div class="study-chips">
+          <button class="study-chip ${STUDY.mode === 'choice' ? 'on' : ''}" data-mode="choice">
+            <b>四选一 📝</b><span>看单词，从四个释义里挑一个——和文章里的猜词一样，答对给勾</span>
+          </button>
+          <button class="study-chip ${STUDY.mode === 'flip' ? 'on' : ''}" data-mode="flip">
+            <b>翻卡自评 🃏</b><span>先自己想，再看释义，诚实判断认不认识——快，但不给勾</span>
+          </button>
+        </div>
+      </div>
+      <div class="study-actions">
+        <button class="btn b" id="studyStart">开始背词组 →</button>
+        <span class="study-tip">答对 +5 XP · 进度会自动存</span>
+      </div>
+    </div>`;
+
+  $$('#studyBody [data-scope]').forEach(el => el.onclick = () => {
+    STUDY.scope = el.dataset.scope; saveStudyCfg(); renderStudy();
+  });
+  $$('#studyBody [data-n]').forEach(el => el.onclick = () => {
+    STUDY.n = +el.dataset.n; saveStudyCfg(); renderStudy();
+  });
+  $$('#studyBody [data-mode]').forEach(el => el.onclick = () => {
+    STUDY.mode = el.dataset.mode; saveStudyCfg(); renderStudy();
+  });
+  $('#studyStart').onclick = startStudy;
+}
+
+function saveStudyCfg() {
+  DB.config.study = { scope: STUDY.scope, n: STUDY.n, mode: STUDY.mode };
+  save();
+}
+
+function renderStudyPlay(box) {
+  const it = STUDY.items[STUDY.i];
+  if (!it) return renderStudyDone(box);
+  const r = recOf(it.w, it.p, it.zh);
+  const dots = STUDY.items.map((x, k) =>
+    `<i class="${x.ok === true ? 'ok' : x.ok === false ? 'no' : k === STUDY.i ? 'cur' : ''}"></i>`).join('');
+  const head = `
+    <div class="gdots">${dots}</div>
+    <div class="gword">${esc(it.w)}</div>
+    <div class="gpos">${esc(it.ph || '')}${it.ph && it.p ? ' · ' : ''}${esc(it.p || '')}</div>
+    <div class="gfacts" style="margin-top:14px">
+      <div class="gchecks">${checks3(r.checks)}</div>
+      <div class="gstat">${statText(r.checks)}</div>
+      <button class="gspk" id="studySpk" title="听一下"><svg viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></button>
+    </div>`;
+  const foot = `<div class="gfoot"><button class="btn sm" id="studyQuit">退出本组</button></div>`;
+
+  if (STUDY.mode === 'flip') {
+    box.innerHTML = `<div class="study-wrap"><div class="gcard study-card">
+      <div class="study-count">${STUDY.i + 1} / ${STUDY.items.length} · 翻卡自评</div>
+      ${head}
+      <div class="gask">先自己在心里想一想，它是什么意思？</div>
+      <div class="study-flip">
+        <button class="btn b" id="studyReveal">显示释义 👀</button>
+        <div id="studyRevealBox" hidden>
+          <div class="study-meaning">${esc(it.zh)}</div>
+          <div class="study-judge">
+            <button class="btn sm" id="studyNo">不认识 😵</button>
+            <button class="btn b sm" id="studyYes">认识 ✓</button>
+          </div>
+        </div>
+      </div>
+      ${foot}
+    </div></div>`;
+  $('#studyQuit').onclick = () => { STUDY.phase = 'setup'; renderStudy(); };
+  $('#studySpk').onclick = () => speakText(it.w);
+  $('#studyReveal').onclick = () => {
+      $('#studyReveal').hidden = true;
+      $('#studyRevealBox').hidden = false;
+      studyJudge(true);
+    };
+    $('#studyYes').onclick = () => studyJudge(true, true);
+    $('#studyNo').onclick = () => studyJudge(false, true);
+  } else {
+    box.innerHTML = `<div class="study-wrap"><div class="gcard study-card">
+      <div class="study-count">${STUDY.i + 1} / ${STUDY.items.length} · 四选一</div>
+      ${head}
+      <div class="gask">它最接近哪个意思？</div>
+      <div class="gopts" id="studyOpts">
+        ${it.opts.map((o, i) => `<button class="gopt" data-i="${i}"><i>${'ABCD'[i]}</i><span>${esc(o)}</span></button>`).join('')}
+      </div>
+      <div class="gfb" id="studyFb" hidden></div>
+      <div class="gfoot">
+        <button class="btn sm" id="studySkip">不会，直接看</button>
+        <button class="btn b" id="studyNext" hidden>下一个 →</button>
+      </div>
+      ${foot}
+    </div></div>`;
+    $('#studyQuit').onclick = () => { STUDY.phase = 'setup'; renderStudy(); };
+    $('#studySpk').onclick = () => speakText(it.w);
+    $$('#studyOpts .gopt').forEach(b => b.onclick = () => answerStudy(+b.dataset.i));
+    $('#studySkip').onclick = () => answerStudy(-1);
+    $('#studyNext').onclick = () => { STUDY.i++; renderStudy(); };
+  }
+}
+
+// flip 模式：reveal 只显示释义；之后 yes/no 才记分。ok 参数表示这次是真的作答。
+function studyJudge(ok, answered) {
+  const it = STUDY.items[STUDY.i];
+  if (!it) return;
+  if (!answered) return;
+  if (it.ok !== null) return;
+  it.ok = ok;
+  const r = recOf(it.w, it.p, it.zh);
+  if (ok) { STUDY.right++; DB.progress.xp = (DB.progress.xp || 0) + 3; }
+  else { r.wrong = (r.wrong || 0) + 1; }
+  r.at = Date.now();
+  save();
+  const fb = $('#studyFb');
+  if (fb) {
+    fb.hidden = false;
+    fb.className = 'gfb ' + (ok ? 'ok' : 'no');
+    fb.innerHTML = ok ? `<b>✓ 认识</b><span>${esc(it.w)} · ${esc(it.zh)}</span>`
+      : `<b>✗ 记一下</b><span>${esc(it.w)} 是「${esc(it.zh)}」。它已经进「错过的小本」，下次可以单独复习。</span>`;
+  }
+  const box = $('#studyRevealBox');
+  if (box) {
+    $$('#studyRevealBox button').forEach(b => b.disabled = true);
+    const next = document.createElement('button');
+    next.className = 'btn b sm';
+    next.textContent = STUDY.i + 1 >= STUDY.items.length ? '看这一轮结果 →' : '下一个 →';
+    next.onclick = () => { STUDY.i++; renderStudy(); };
+    box.appendChild(next);
+  }
+  checkAch();
+}
+
+function answerStudy(choice) {
+  const it = STUDY.items[STUDY.i];
+  if (!it || it.ok !== null) return;
+  const ok = choice === it.a;
+  it.ok = ok;
+  const r = recOf(it.w, it.p, it.zh);
+  if (ok) {
+    STUDY.right++;
+    if ((r.checks || 0) < 3) {
+      r.checks = (r.checks || 0) + 1;
+      if (r.checks === 3) toast('🎉 ' + it.w + ' 拿满三个勾了');
+    }
+    DB.progress.xp = (DB.progress.xp || 0) + 5;
+  } else {
+    r.wrong = (r.wrong || 0) + 1;
+  }
+  r.at = Date.now();
+  r.level = r.checks >= 3 ? 3 : r.checks > 0 ? 2 : 1;
+  save();
+  $$('#studyOpts .gopt').forEach((el, k) => {
+    el.disabled = true;
+    if (k === it.a) el.classList.add('right');
+    else if (k === choice) el.classList.add('wrong');
+  });
+  const fb = $('#studyFb');
+  fb.hidden = false;
+  fb.className = 'gfb ' + (ok ? 'ok' : 'no');
+  fb.innerHTML = ok
+    ? `<b>✓ 对了</b><span>${esc(it.w)} · ${esc(it.zh)}${r.checks >= 3 ? ' —— 三个勾拿满，初步掌握' : ''}</span>`
+    : `<b>✗ 差一点</b><span>${esc(it.w)} 是「${esc(it.zh)}」。这次不给勾，它已进「错过的小本」。</span>`;
+  $('#studySkip').hidden = true;
+  const next = $('#studyNext');
+  next.hidden = false;
+  next.textContent = STUDY.i + 1 >= STUDY.items.length ? '看这一轮结果 →' : '下一个 →';
+  checkAch();
+}
+
+function renderStudyDone(box) {
+  const total = STUDY.items.length;
+  const pct = total ? Math.round(STUDY.right / total * 100) : 0;
+  if (!STUDY.saved) {
+    DB.progress.studyLog = DB.progress.studyLog || [];
+    DB.progress.studyLog.push({ date: TODAY, total, right: STUDY.right, mode: STUDY.mode });
+    STUDY.saved = true;
+    save();
+  }
+  const icon = pct >= 80 ? '🎯' : pct >= 50 ? '🌱' : '📚';
+  const lead = pct >= 80 ? '这一轮很稳。词是反复认出来的，不是一次背下来的。'
+    : pct >= 50 ? '过半了。错的那几个已经进了「错过的小本」，下次单独收拾它们。'
+      : '第一次见这些词很正常。先混个脸熟，明天它们还会来。';
+  box.innerHTML = `<div class="study-wrap"><div class="gcard study-card"><div class="gdone">
+    <div class="gdone-ico">${icon}</div>
+    <h2>记住 ${STUDY.right} / ${total}</h2>
+    <p class="glead">${lead}</p>
+    <div class="gsum">
+      <div><b>${total}</b><span>本组词数</span></div>
+      <div><b>${STUDY.right}</b><span>答对</span></div>
+      <div><b>${total - STUDY.right}</b><span>待巩固</span></div>
+    </div>
+    <div class="study-judge" style="justify-content:center">
+      <button class="btn b" id="studyAgain">再来一组 →</button>
+      <button class="btn" id="studyChange">换范围</button>
+    </div>
+  </div></div></div>`;
+  $('#studyAgain').onclick = () => { STUDY.phase = 'play'; startStudy(); };
+  $('#studyChange').onclick = () => { STUDY.phase = 'setup'; renderStudy(); };
 }
 
 /* ---------------- 成长 ---------------- */
