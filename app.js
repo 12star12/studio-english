@@ -81,6 +81,17 @@ async function boot() {
     DB.progress = Object.assign({}, DEFAULT_DB.progress, data.progress || {});
     // 一次性迁移：老数据里 order 是旧默认 listen（从未被主动选过）——按用户意愿改为先读后听
     if (!DB.config.cfgV) { DB.config.order = 'read'; DB.config.cfgV = 2; save(); }
+    // 一次性迁移：勾的语义改为「学过就给 1 个」。历史答过/自评过的词（wrong>0）补 1 勾，
+    // 纯收藏（只在文章里点过、没答过）的不补，避免"学习中"虚高。
+    if (!DB.config.studyV) {
+      let n = 0;
+      Object.values(DB.words).forEach(r => {
+        if (!(r.checks > 0) && ((r.wrong || 0) > 0 || (r.level || 1) > 1)) { r.checks = 1; n++; }
+      });
+      DB.config.studyV = 1;
+      if (n) console.log('[migrate] 补记学过的词:', n);
+      save();
+    }
     // 题目兜底：洗掉历史文章里 AI 写坏的题（答案下标越界等）
     DB.articles.forEach(a => {
       a.listening = (a.listening || []).map(fixQ).filter(Boolean);
@@ -1089,6 +1100,16 @@ function addWord(w) {
 /* ---------------- 猜词：三个勾 = 初步掌握 ---------------- */
 const GUESS = { items: [], i: 0, right: 0, gained: 0, mastered: 0, saved: false };
 
+// 统一的记分口径：第一次学过（无论对错、无论哪种模式）就给 1 个勾，表示「学过」；
+// 之后只有答对/点「认识」才累加到 2、3。避免"学过却一个勾都没有"，也不让乱猜三次算掌握。
+// 返回 true 表示这次拿满了三个勾（供调用方提示）。
+function markStudied(r, ok) {
+  const before = r.checks || 0;
+  if (before === 0) r.checks = 1;
+  else if (ok && before < 3) r.checks = before + 1;
+  return before < 3 && r.checks >= 3;
+}
+
 function masteredCount() {
   return Object.values(DB.words).filter(w => (w.checks || 0) >= 3).length;
 }
@@ -1211,14 +1232,12 @@ function answerGuess(choice) {
   it.ok = ok;
   if (ok) {
     GUESS.right++;
-    if ((r.checks || 0) < 3) {
-      r.checks = (r.checks || 0) + 1;
-      GUESS.gained++;
-      if (r.checks === 3) GUESS.mastered++;
-    }
+    if (markStudied(r, true)) { GUESS.mastered++; GUESS.gained++; }
+    else if ((r.checks || 0) >= 1) GUESS.gained++;
     DB.progress.xp = (DB.progress.xp || 0) + 5;
   } else {
     r.wrong = (r.wrong || 0) + 1;
+    markStudied(r, false); // 答错也算学过，记 1 个勾
   }
   r.at = Date.now();
   r.level = r.checks >= 3 ? 3 : r.checks > 0 ? 2 : 1;
@@ -1234,7 +1253,7 @@ function answerGuess(choice) {
   fb.className = 'gfb ' + (ok ? 'ok' : 'no');
   fb.innerHTML = ok
     ? `<b>✓ 对了</b><span>${esc(it.w)} · ${esc(it.zh)}${r.checks >= 3 ? ' —— 三个勾拿满，这个词可以算初步掌握了' : ''}</span>`
-    : `<b>✗ 差一点</b><span>${esc(it.w)} 是「${esc(it.zh)}」。这次不给勾，下次读到它再试一次。</span>`;
+    : `<b>✗ 差一点</b><span>${esc(it.w)} 是「${esc(it.zh)}」。已经记下你学过它了，下次读到再答一次。</span>`;
   $('#gChecks').innerHTML = checks3(r.checks);
   $('#gStat').textContent = statText(r.checks);
   $('#gSkip').hidden = true;
@@ -1488,7 +1507,7 @@ function renderWords() {
       <div class="bh-top">
         <div>
           <h2>词书</h2>
-          <p class="lead" style="margin-bottom:0">三个勾算初步掌握。勾只在「猜词」里猜对时给，猜错不给。</p>
+          <p class="lead" style="margin-bottom:0">三个勾算初步掌握。第一次学过就记 1 个勾，之后答对才累加到 2、3。</p>
         </div>
         <button class="btn sm" id="bookImport">导入我的词表</button>
       </div>
@@ -1695,10 +1714,10 @@ function renderStudySetup(box) {
         <div class="study-label">③ 怎么背</div>
         <div class="study-chips">
           <button class="study-chip ${STUDY.mode === 'choice' ? 'on' : ''}" data-mode="choice">
-            <b>四选一 📝</b><span>看单词，从四个释义里挑一个——和文章里的猜词一样，答对给勾</span>
+            <b>四选一 📝</b><span>看单词，从四个释义里挑一个——学过就记 1 勾，答对再加</span>
           </button>
           <button class="study-chip ${STUDY.mode === 'flip' ? 'on' : ''}" data-mode="flip">
-            <b>翻卡自评 🃏</b><span>先自己想，再看释义，诚实判断认不认识——快，但不给勾</span>
+            <b>翻卡自评 🃏</b><span>先自己想，再看释义，诚实判断认不认识——学过记 1 勾，认识再加</span>
           </button>
         </div>
       </div>
@@ -1803,6 +1822,7 @@ function studyJudge(ok, answered) {
   const r = recOf(it.w, it.p, it.zh);
   if (ok) { STUDY.right++; DB.progress.xp = (DB.progress.xp || 0) + 3; }
   else { r.wrong = (r.wrong || 0) + 1; }
+  markStudied(r, ok); // 翻卡自评：学过就给 1 勾，认识才累加
   r.at = Date.now();
   save();
   const fb = $('#studyFb');
@@ -1832,13 +1852,11 @@ function answerStudy(choice) {
   const r = recOf(it.w, it.p, it.zh);
   if (ok) {
     STUDY.right++;
-    if ((r.checks || 0) < 3) {
-      r.checks = (r.checks || 0) + 1;
-      if (r.checks === 3) toast('🎉 ' + it.w + ' 拿满三个勾了');
-    }
+    if (markStudied(r, true) && r.checks === 3) toast('🎉 ' + it.w + ' 拿满三个勾了');
     DB.progress.xp = (DB.progress.xp || 0) + 5;
   } else {
     r.wrong = (r.wrong || 0) + 1;
+    markStudied(r, false); // 答错也算学过，记 1 个勾
   }
   r.at = Date.now();
   r.level = r.checks >= 3 ? 3 : r.checks > 0 ? 2 : 1;
@@ -1853,7 +1871,7 @@ function answerStudy(choice) {
   fb.className = 'gfb ' + (ok ? 'ok' : 'no');
   fb.innerHTML = ok
     ? `<b>✓ 对了</b><span>${esc(it.w)} · ${esc(it.zh)}${r.checks >= 3 ? ' —— 三个勾拿满，初步掌握' : ''}</span>`
-    : `<b>✗ 差一点</b><span>${esc(it.w)} 是「${esc(it.zh)}」。这次不给勾，它已进「错过的小本」。</span>`;
+    : `<b>✗ 差一点</b><span>${esc(it.w)} 是「${esc(it.zh)}」。已经记下你学过它了，它也进了「错过的小本」。</span>`;
   $('#studySkip').hidden = true;
   const next = $('#studyNext');
   next.hidden = false;
@@ -1980,7 +1998,7 @@ function renderSettings() {
           <label class="sw"><input type="checkbox" id="tgListen" ${s.listen !== false ? 'checked' : ''}><i></i></label>
         </div>
         <div class="step-row">
-          <div class="s-info"><b>猜词</b><span>读完遮住释义猜意思，猜对拿勾，三个勾算初步掌握</span></div>
+          <div class="s-info"><b>猜词</b><span>读完遮住释义猜意思，学过记 1 勾，答对再加，三个勾算初步掌握</span></div>
           <label class="sw"><input type="checkbox" id="tgGuess" ${s.guess !== false ? 'checked' : ''}><i></i></label>
         </div>
         <div class="step-row">
