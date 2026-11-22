@@ -1738,7 +1738,7 @@ function renderStudyPlay(box) {
     <div class="gfacts" style="margin-top:14px">
       <div class="gchecks">${checks3(r.checks)}</div>
       <div class="gstat">${statText(r.checks)}</div>
-      <button class="gspk" id="studySpk" title="听一下"><svg viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></button>
+      <button class="gspk" id="studySpk" title="再听一遍"><svg viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></button>
     </div>`;
   const foot = `<div class="gfoot"><button class="btn sm" id="studyQuit">退出本组</button></div>`;
 
@@ -1789,6 +1789,8 @@ function renderStudyPlay(box) {
     $('#studySkip').onclick = () => answerStudy(-1);
     $('#studyNext').onclick = () => { STUDY.i++; renderStudy(); };
   }
+  // 进入卡片自动朗读单词（speakText 内部有 token 机制，快速切题不会串音）
+  speakText(it.w);
 }
 
 // flip 模式：reveal 只显示释义；之后 yes/no 才记分。ok 参数表示这次是真的作答。
