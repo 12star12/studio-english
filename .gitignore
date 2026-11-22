@@ -8,3 +8,9 @@ _test.js
 .DS_Store
 
 tools/ui-shots/
+
+tools/gloss-generated.json
+tools/gloss-progress.json
+tools/gloss-missing.json
+tools/gloss-fill.log
+words.js.bak
