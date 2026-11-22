@@ -1683,8 +1683,11 @@ function renderStudy() {
 
 function renderStudySetup(box) {
   const scopes = studyScopes();
-  const counts = {};
-  Object.keys(scopes).forEach(k => counts[k] = scopes[k].length);
+  const counts = {}, learned = {};
+  Object.keys(scopes).forEach(k => {
+    counts[k] = scopes[k].length;
+    learned[k] = scopes[k].filter(x => (DB.words[x.w] || {}).checks > 0).length;
+  });
   const nOpts = [10, 20, 50];
   box.innerHTML = `
     <div class="simple study-setup">
@@ -1698,10 +1701,18 @@ function renderStudySetup(box) {
       <div class="study-group">
         <div class="study-label">① 选范围</div>
         <div class="study-chips">
-          ${STUDY_SCOPES.map(([k, name, desc]) => `
-            <button class="study-chip ${STUDY.scope === k ? 'on' : ''}" data-scope="${k}" ${counts[k] ? '' : 'disabled'}>
-              <b>${name}</b><span>${counts[k]} 个 · ${desc}</span>
-            </button>`).join('')}
+          ${STUDY_SCOPES.map(([k, name, desc]) => {
+            const raw = counts[k] ? learned[k] / counts[k] * 100 : 0;
+            const pct = Math.round(raw);
+            const label = raw > 0 && pct === 0 ? '<1%' : pct + '%';
+            const barW = raw > 0 && pct === 0 ? 1 : pct; // 有进度至少显示一丝，不至于看不见
+            return `<button class="study-chip ${STUDY.scope === k ? 'on' : ''}" data-scope="${k}" ${counts[k] ? '' : 'disabled'}>
+              <b>${name}<i class="study-chip-pct">${label}</i></b>
+              <span>共 ${counts[k]} 个 · 已学 ${learned[k]} 个</span>
+              <span class="study-chip-desc">${desc}</span>
+              <span class="study-chip-bar"><i style="width:${barW}%"></i></span>
+            </button>`;
+          }).join('')}
         </div>
       </div>
       <div class="study-group">

@@ -1074,3 +1074,15 @@ textarea:focus{border-color:#C9BCFF;background:#fff}
   padding:14px 26px;box-shadow:0 4px 0 #F4DCE8;
 }
 .study-judge{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:14px}
+
+/* 背词范围卡：学习进度 */
+.study-chip b{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.study-chip-pct{
+  font-style:normal;font-size:10px;font-weight:800;color:#6C63FF;
+  background:#EFEAFF;border-radius:20px;padding:1px 8px;flex:none;
+}
+.study-chip.on .study-chip-pct{background:#fff;color:#5B4FD8}
+.study-chip-desc{font-size:10px;color:#BDB4D2;line-height:1.5;margin-top:1px}
+.study-chip-bar{display:block;height:5px;border-radius:20px;background:#EFE9F8;margin-top:7px;overflow:hidden}
+.study-chip-bar i{display:block;height:100%;border-radius:20px;background:linear-gradient(90deg,#6C63FF,#A66BFF);transition:width .4s}
+.study-chip.on .study-chip-bar{background:#E4DCFF}
