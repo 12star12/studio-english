@@ -1123,3 +1123,34 @@ textarea:focus{border-color:#C9BCFF;background:#fff}
 .dg-right span{font-size:12px;font-weight:800;color:#6C63FF;font-variant-numeric:tabular-nums}
 .daily-goal.done .dg-right span{color:#1D9C6F}
 .dg-right em{font-style:normal;font-size:10px;color:#C0B6D8}
+
+/* ================= 学习时长 ================= */
+.today-dur{
+  margin-top:10px;padding:7px 14px;border-radius:14px;display:inline-block;
+  background:linear-gradient(135deg,#FFF3E4,#FFE8F0);color:#C2703A;
+  border:2px solid #fff;box-shadow:0 3px 0 #F4DCE8;
+  font-family:var(--round);font-size:12px;font-weight:800;
+}
+.dur-chart{padding:14px 4px 4px}
+.dur-chart-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.dur-chart-h b{font-family:var(--round);font-size:12.5px;font-weight:800;color:#4B3B8A}
+.dur-chart-h span{font-size:11px;color:#9A92BC;font-weight:700}
+.dur-bars{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;align-items:end}
+.dur-col{display:flex;flex-direction:column;align-items:center;gap:5px}
+.dur-track{
+  width:100%;height:88px;border-radius:14px;background:#F3EEFC;
+  display:flex;align-items:flex-end;overflow:hidden;border:2px solid #fff;
+}
+.dur-fill{
+  width:100%;border-radius:12px 12px 0 0;min-height:0;
+  background:linear-gradient(180deg,#A66BFF,#6C63FF);transition:height .5s cubic-bezier(.2,.8,.3,1);
+}
+.dur-col.today .dur-fill{background:linear-gradient(180deg,#FFB36B,#FF7A9C)}
+.dur-label{font-size:11px;font-weight:700;color:#A49AC4}
+.dur-col.today .dur-label{color:#E07A4A}
+.dur-val{font-size:10px;font-weight:800;color:#9A92BC;font-variant-numeric:tabular-nums}
+.dur-note{font-size:10.5px;color:#BDB4D2;margin:12px 0 0;text-align:center}
+@media (max-width:600px){
+  .dur-track{height:64px}
+  .dur-bars{gap:5px}
+}

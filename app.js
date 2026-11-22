@@ -141,7 +141,57 @@ function go(v) {
   if (v === 'growth') renderGrowth();
   if (v === 'settings') renderSettings();
   if (v === 'home') renderHome();
+  VIEW = v;
   $('#main').scrollTop = 0;
+}
+
+/* ---------------- 学习时长统计 ----------------
+   只统计"前台 + 学习页 + 有操作"的活跃秒数：挂着不走不算，切走自动暂停。
+   每 5 秒结算一次，每满 30 秒落盘。 */
+let VIEW = 'home';
+let lastActiveAt = Date.now();
+let secBuffer = 0;
+const LEARN_VIEWS = ['listen', 'read', 'guess', 'train', 'study'];
+['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(ev =>
+  document.addEventListener(ev, () => { lastActiveAt = Date.now(); }, { passive: true }));
+
+function activeSeconds(n) {
+  const d = DB.progress.days[TODAY] || (DB.progress.days[TODAY] = { words: 0, n: 0 });
+  d.sec = (d.sec || 0) + n;
+  DB.progress.days[TODAY] = d;
+}
+function flushSecBuffer() {
+  if (secBuffer <= 0) return;
+  activeSeconds(secBuffer);
+  secBuffer = 0;
+  save();
+}
+function isLearningNow() {
+  return LEARN_VIEWS.includes(VIEW)
+    && !document.hidden
+    && document.hasFocus()
+    && (Date.now() - lastActiveAt) < 90000;
+}
+setInterval(() => {
+  if (!isLearningNow()) { if (secBuffer) flushSecBuffer(); return; }
+  secBuffer += 5;
+  if (secBuffer >= 30) flushSecBuffer();
+}, 5000);
+setInterval(tickTodayDur, 1000);
+window.addEventListener('blur', flushSecBuffer);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushSecBuffer(); });
+window.addEventListener('beforeunload', flushSecBuffer);
+
+function daySec(date) {
+  const d = DB.progress.days[date];
+  return d ? (d.sec || 0) : 0;
+}
+function fmtDur(sec) {
+  sec = Math.round(sec || 0);
+  if (sec < 60) return sec + ' 秒';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  if (m < 60) return m + ' 分' + (s ? ' ' + s + ' 秒' : '');
+  return Math.floor(m / 60) + ' 小时 ' + (m % 60) + ' 分';
 }
 document.addEventListener('click', e => {
   const nav = e.target.closest('#nav a');
@@ -186,6 +236,12 @@ function renderDailyStrip() {
   if (hint) hint.textContent = gs.every(g => g.done)
     ? '🎉 今天全部达成，厉害'
     : gs.filter(g => g.done).length + '/' + gs.length + ' 已完成 · 每天重新开始，没有断签惩罚';
+  const td = $('#todayDur');
+  if (td) td.textContent = '⏱ 今日学习 ' + fmtDur(daySec(TODAY));
+}
+function tickTodayDur() {
+  const td = $('#todayDur');
+  if (td && !$('#v-home').hidden) td.textContent = '⏱ 今日学习 ' + fmtDur(daySec(TODAY) + secBuffer);
 }
 
 function renderToday() {
@@ -2033,6 +2089,31 @@ function renderStudyDone(box) {
 }
 
 /* ---------------- 成长 ---------------- */
+function durChartHTML() {
+  const days = [], now = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now); d.setDate(now.getDate() - i);
+    const key = dstr(d);
+    days.push({ key, label: ['日', '一', '二', '三', '四', '五', '六'][d.getDay()], sec: daySec(key) });
+  }
+  const max = Math.max(60, ...days.map(x => x.sec));
+  const total = days.reduce((s, x) => s + x.sec, 0);
+  return `<div class="dur-chart">
+    <div class="dur-chart-h"><b>最近 7 天的学习时长</b><span>合计 ${fmtDur(total)}</span></div>
+    <div class="dur-bars">
+      ${days.map(x => {
+        const pct = Math.round(x.sec / max * 100);
+        return `<div class="dur-col ${x.key === TODAY ? 'today' : ''}" title="${x.key} · ${fmtDur(x.sec)}">
+          <div class="dur-track"><div class="dur-fill" style="height:${pct}%"></div></div>
+          <span class="dur-label">${x.key === TODAY ? '今天' : x.label}</span>
+          <span class="dur-val">${x.sec ? Math.round(x.sec / 60) + '′' : '—'}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <p class="dur-note">只统计在前台认真操作的活跃时间，切走或发呆会自动暂停。</p>
+  </div>`;
+}
+
 function renderGrowth() {
   const L = level(DB.progress.xp);
   const l = DB.progress.listenLog, r = DB.progress.readLog;
@@ -2048,9 +2129,10 @@ function renderGrowth() {
       <div class="mini-stats" style="padding:6px 0 18px">
         <div><b style="font-size:26px">Lv.${L.lv}</b><span>等级</span></div>
         <div><b style="font-size:26px">${doneN}</b><span>读过的篇数</span></div>
-        <div><b style="font-size:26px">${totalWords}</b><span>读过的词数</span></div>
-        <div><b style="font-size:26px">${days}</b><span>学习过的天数</span></div>
+        <div><b style="font-size:26px">${fmtDur(Object.values(DB.progress.days).reduce((s, d) => s + (d.sec || 0), 0))}</b><span>累计学习时长</span></div>
+        <div><b style="font-size:26px">${fmtDur(daySec(TODAY) + secBuffer)}</b><span>今日学习</span></div>
       </div>
+      ${durChartHTML()}
       <div class="row"><span class="lab">距离下一级</span><span class="val">${L.need - L.cur} XP</span></div>
       <div class="row"><span class="lab">听力正确率</span><span class="val">${l.length ? acc + '%' : '还没做过题'}</span></div>
       <div class="row"><span class="lab">阅读题正确率</span><span class="val">${r.length ? rAcc + '%' : '还没做过题'}</span></div>
