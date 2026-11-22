@@ -171,9 +171,21 @@ function renderHome() {
   if (accEl) accEl.textContent = ll.length ? Math.round(ll.reduce((a, b) => a + b, 0) / ll.length * 100) + '%' : '—';
 
   renderSpark();
+  renderDailyStrip();
   renderCollectionPreview();
   renderCollFoot();
   renderToday();
+}
+
+function renderDailyStrip() {
+  const box = $('#dailyStrip');
+  if (!box) return;
+  box.innerHTML = dailyHTML(true);
+  const gs = dailyProgress();
+  const hint = $('#dailyHint');
+  if (hint) hint.textContent = gs.every(g => g.done)
+    ? '🎉 今天全部达成，厉害'
+    : gs.filter(g => g.done).length + '/' + gs.length + ' 已完成 · 每天重新开始，没有断签惩罚';
 }
 
 function renderToday() {
@@ -1009,7 +1021,9 @@ $('#qSubmit').onclick = () => {
   picked[qi] = pick;
   if (!answered[qi]) {
     answered[qi] = true;
-    DB.progress.listenLog.push(pick === q.a ? 1 : 0);
+    const right = pick === q.a ? 1 : 0;
+    DB.progress.listenLog.push(right);
+    if (right) bumpDaily('quiz');
     save();
   }
   applyAnswer();
@@ -1234,7 +1248,7 @@ function answerGuess(choice) {
     GUESS.right++;
     if (markStudied(r, true)) { GUESS.mastered++; GUESS.gained++; }
     else if ((r.checks || 0) >= 1) GUESS.gained++;
-    DB.progress.xp = (DB.progress.xp || 0) + 5;
+    gainXP(5); bumpDaily('quiz');
   } else {
     r.wrong = (r.wrong || 0) + 1;
     markStudied(r, false); // 答错也算学过，记 1 个勾
@@ -1333,6 +1347,7 @@ $('#rSubmit').onclick = () => {
     cur._rPick = i;
     cur._rRight = i === a ? 1 : 0;
     DB.progress.readLog.push(cur._rRight);
+    if (cur._rRight) bumpDaily('quiz');
     save();
   }
   $('#rAns').hidden = false;
@@ -1374,7 +1389,9 @@ $('#toDone').onclick = () => {
   let gain = 40 + Math.round(acc * 35) + (cur._rDone ? (rAcc ? 18 : 9) : 0) + (hasT ? 12 : 0) + (hasC ? 18 : 0) + Math.round(cur.len / 400 * 20);
   const first = !cur.done;
   if (first) cur.done = true;
-  DB.progress.xp += first ? gain : Math.round(gain * 0.3);
+  gainXP(first ? gain : Math.round(gain * 0.3));
+  bumpDaily('read');
+  if (hasT || hasC) bumpDaily('write');
   DB.progress.doneIds = DB.progress.doneIds || [];
   if (!DB.progress.doneIds.includes(cur.id)) DB.progress.doneIds.push(cur.id);
   bumpDay(cur.len);
@@ -1416,6 +1433,98 @@ function doneCat() {
     <path d="M57 47 q10-4 14 2" stroke="#F5DFC4" stroke-width="7" fill="none" stroke-linecap="round"/>
     <path d="M65 21l2.2 6 6 1.6-6 1.8-2.2 6-2.2-6-6-1.8 6-1.6z" fill="#F2C14E"/>
   </svg>`;
+}
+
+/* ---------------- 每日里程碑 ----------------
+   每天 0 点自动重置（按 TODAY 作为 key）。 milestone 完成弹庆祝 + 额外 XP。
+   没有连续打卡、没有断签惩罚——只是"今天做了什么"的小目标。 */
+const DAILY_GOALS = [
+  { id: 'read',   icon: '📖', name: '读一篇',   desc: '今天完成一篇文章',   target: 1,  xp: 5 },
+  { id: 'words',  icon: '🔤', name: '背十词',   desc: '今天背 10 个单词',   target: 10, xp: 8 },
+  { id: 'quiz',   icon: '🎯', name: '答对五题', desc: '今天答对 5 道题',     target: 5,  xp: 8 },
+  { id: 'write',  icon: '✍️', name: '动一次笔', desc: '翻译 / 造句 / 摘抄任一', target: 1, xp: 5 },
+  { id: 'xp',     icon: '⚡', name: '攒 20 XP', desc: '今天累计获得 20 XP', target: 20, xp: 10 }
+];
+
+function daily() {
+  const d = DB.progress.daily || (DB.progress.daily = {});
+  if (!d[TODAY]) d[TODAY] = { read: 0, words: 0, quiz: 0, write: 0, xp: 0, done: {} };
+  const rec = d[TODAY];
+  if (!rec.done) rec.done = {};
+  return rec;
+}
+
+// 统一的 XP 入口：加经验的同时累计今日 XP（里程碑奖励的 XP 不计入，避免循环）
+function gainXP(n) {
+  DB.progress.xp = (DB.progress.xp || 0) + n;
+  const d = daily();
+  d.xp = (d.xp || 0) + n;
+  DAILY_GOALS.forEach(g => {
+    if (g.id === 'xp' && !d.done.xp && d.xp >= g.target) {
+      d.done.xp = Date.now();
+      DB.progress.xp += g.xp; d.xp += g.xp; // 奖励本身也不再触发
+      popDaily(g);
+    }
+  });
+}
+
+// 累加今天的某项行为；n 可为负（用于撤销）。检查里程碑是否新达成。
+function bumpDaily(key, n = 1) {
+  const d = daily();
+  if (typeof d[key] !== 'number') d[key] = 0;
+  d[key] = Math.max(0, d[key] + n);
+  let changed = false;
+  if (key !== 'xp') DAILY_GOALS.forEach(g => { // xp 里程碑由 gainXP 单独判定，避免重复奖励
+    if (g.id !== key || d.done[g.id]) return;
+    if (d[key] >= g.target) {
+      d.done[g.id] = Date.now();
+      gainXP(g.xp); // 里程碑奖励也走 gainXP，但不计入 xp 里程碑（在 gainXP 里排除）
+      popDaily(g);
+      changed = true;
+    }
+  });
+  save();
+  if (changed && typeof renderHome === 'function' && !$('#v-home').hidden) renderHome();
+  if (changed && typeof renderGrowth === 'function' && !$('#v-growth').hidden) renderGrowth();
+  return changed;
+}
+
+function popDaily(g) {
+  const p = $('#achPop');
+  if (!p) return;
+  p.innerHTML = `<div class="ai">${g.icon}</div><div><b>今日达成：${g.name}</b><span>+${g.xp} XP · ${g.desc}</span></div>`;
+  p.hidden = false;
+  clearTimeout(p._t);
+  p._t = setTimeout(() => { p.hidden = true; }, 3600);
+}
+
+function dailyProgress() {
+  const d = daily();
+  return DAILY_GOALS.map(g => ({ ...g, cur: Math.min(d[g.id] || 0, g.target), done: !!d.done[g.id] }));
+}
+
+function dailyHTML(compact) {
+  const gs = dailyProgress();
+  const n = gs.filter(g => g.done).length;
+  if (compact) {
+    return `<div class="daily-strip">
+      ${gs.map(g => `<div class="daily-mini ${g.done ? 'done' : ''}" title="${g.desc}">
+        <span class="dm-ico">${g.icon}</span>
+        <span class="dm-num">${g.done ? '✓' : Math.min(g.cur, g.target) + '/' + g.target}</span>
+      </div>`).join('')}
+      <span class="daily-count">${n}/${gs.length}</span>
+    </div>`;
+  }
+  return `<div class="daily-grid">
+    ${gs.map(g => `<div class="daily-goal ${g.done ? 'done' : ''}">
+      <div class="dg-ico">${g.icon}</div>
+      <div class="dg-body">
+        <b>${g.name}</b><span>${g.desc}</span>
+        <div class="dg-bar"><i style="width:${Math.round(g.cur / g.target * 100)}%"></i></div>
+      </div>
+      <div class="dg-right"><span>${g.cur}/${g.target}</span><em>+${g.xp} XP</em></div>
+    </div>`).join('')}
+  </div>`;
 }
 
 /* ---------------- 成就 ---------------- */
@@ -1831,9 +1940,10 @@ function studyJudge(ok, answered) {
   if (it.ok !== null) return;
   it.ok = ok;
   const r = recOf(it.w, it.p, it.zh);
-  if (ok) { STUDY.right++; DB.progress.xp = (DB.progress.xp || 0) + 3; }
+  if (ok) { STUDY.right++; gainXP(3); bumpDaily('quiz'); }
   else { r.wrong = (r.wrong || 0) + 1; }
   markStudied(r, ok); // 翻卡自评：学过就给 1 勾，认识才累加
+  bumpDaily('words'); // 背词都算数（认识/不认识都算学过）
   r.at = Date.now();
   save();
   const fb = $('#studyFb');
@@ -1864,11 +1974,12 @@ function answerStudy(choice) {
   if (ok) {
     STUDY.right++;
     if (markStudied(r, true) && r.checks === 3) toast('🎉 ' + it.w + ' 拿满三个勾了');
-    DB.progress.xp = (DB.progress.xp || 0) + 5;
+    gainXP(5); bumpDaily('quiz');
   } else {
     r.wrong = (r.wrong || 0) + 1;
     markStudied(r, false); // 答错也算学过，记 1 个勾
   }
+  bumpDaily('words');
   r.at = Date.now();
   r.level = r.checks >= 3 ? 3 : r.checks > 0 ? 2 : 1;
   save();
@@ -1949,8 +2060,12 @@ function renderGrowth() {
       <div class="row"><span class="lab">猜词正确率</span><span class="val">${DB.progress.guessLog.length ? Math.round(DB.progress.guessLog.reduce((a, b) => a + b.right, 0) / Math.max(1, DB.progress.guessLog.reduce((a, b) => a + b.total, 0)) * 100) + '%' : '还没猜过'}</span></div>
       <div class="row"><span class="lab">写过翻译 / 造句</span><span class="val">${DB.progress.trans ? '有' : '还没有'} / ${DB.progress.coll ? '有' : '还没有'}</span></div>
     </div>
+    <div class="simple" style="margin-bottom:14px">
+      <h2>今日里程碑</h2><p class="lead">每天 0 点重新开始。没有连续打卡，没有断签惩罚——只是今天做了什么。</p>
+      ${dailyHTML(false)}
+    </div>
     <div class="simple">
-      <h2>成就</h2><p class="lead">解锁了 ${Object.keys(DB.progress.achievements).length} / ${ACHIEVEMENTS.length}</p>
+      <h2>生涯成就</h2><p class="lead">解锁了 ${Object.keys(DB.progress.achievements).length} / ${ACHIEVEMENTS.length}</p>
       <div class="ach-grid">
         ${ACHIEVEMENTS.map(a => `<div class="ach ${DB.progress.achievements[a.id] ? '' : 'off'}">
           <div class="ai">${a.icon}</div><b>${a.name}</b><span>${a.desc}</span></div>`).join('')}
@@ -2122,7 +2237,7 @@ $('#markBtn').onclick = () => {
   if (!DB.progress.marks) DB.progress.marks = [];
   if (DB.progress.marks.some(m => m.text === t)) { toast('这句已经在摘抄本里了'); hideMarkBtn(); window.getSelection().removeAllRanges(); return; }
   DB.progress.marks.push({ id: 'mk' + Date.now(), text: t, from: cur ? cur.title : '', date: TODAY, ts: Date.now() });
-  DB.progress.xp = (DB.progress.xp || 0) + 2;
+  gainXP(2); bumpDaily('write');
   save();
   hideMarkBtn();
   window.getSelection().removeAllRanges();

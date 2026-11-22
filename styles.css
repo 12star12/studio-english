@@ -1086,3 +1086,40 @@ textarea:focus{border-color:#C9BCFF;background:#fff}
 .study-chip-bar{display:block;height:5px;border-radius:20px;background:#EFE9F8;margin-top:7px;overflow:hidden}
 .study-chip-bar i{display:block;height:100%;border-radius:20px;background:linear-gradient(90deg,#6C63FF,#A66BFF);transition:width .4s}
 .study-chip.on .study-chip-bar{background:#E4DCFF}
+
+/* ================= 每日里程碑 ================= */
+.daily-card{margin-top:14px;min-height:0}
+.daily-strip{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.daily-mini{
+  display:flex;align-items:center;gap:5px;padding:7px 11px;border-radius:16px;
+  background:#FCFAFF;border:2px solid #EFE9F8;transition:.15s;
+}
+.daily-mini .dm-ico{font-size:15px;line-height:1}
+.daily-mini .dm-num{font-size:11px;font-weight:800;color:#9A92BC;font-variant-numeric:tabular-nums}
+.daily-mini.done{background:linear-gradient(135deg,#EAFBF2,#E4F7FF);border-color:#BDEBD5}
+.daily-mini.done .dm-num{color:#1D9C6F}
+.daily-count{
+  margin-left:auto;font-size:11px;font-weight:800;color:#6C63FF;
+  background:#EFEAFF;border-radius:20px;padding:4px 12px;white-space:nowrap;
+}
+.daily-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.daily-goal{
+  display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:18px;
+  background:#FCFAFF;border:2px solid #EFE9F8;transition:.15s;
+}
+.daily-goal.done{background:linear-gradient(135deg,#EFFBF5,#E8F6FF);border-color:#BDEBD5}
+.dg-ico{
+  width:42px;height:42px;flex:none;border-radius:13px;display:grid;place-items:center;font-size:21px;
+  background:#F2EEFF;border:2px solid #fff;box-shadow:0 3px 0 #E6DFFF;
+}
+.daily-goal.done .dg-ico{background:linear-gradient(135deg,#D9F5E5,#D9EEFF)}
+.dg-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.dg-body b{font-family:var(--round);font-size:13px;font-weight:800;color:#4B3B8A}
+.dg-body span{font-size:10.5px;color:#A49AC4;line-height:1.4}
+.dg-bar{height:5px;border-radius:20px;background:#EFE9F8;margin-top:6px;overflow:hidden}
+.dg-bar i{display:block;height:100%;border-radius:20px;background:linear-gradient(90deg,#6C63FF,#A66BFF);transition:width .4s}
+.daily-goal.done .dg-bar i{background:linear-gradient(90deg,#2ECF8F,#6FE0C8)}
+.dg-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none}
+.dg-right span{font-size:12px;font-weight:800;color:#6C63FF;font-variant-numeric:tabular-nums}
+.daily-goal.done .dg-right span{color:#1D9C6F}
+.dg-right em{font-style:normal;font-size:10px;color:#C0B6D8}
