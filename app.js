@@ -93,10 +93,7 @@ async function boot() {
       save();
     }
     // 题目兜底：洗掉历史文章里 AI 写坏的题（答案下标越界等）
-    DB.articles.forEach(a => {
-      a.listening = (a.listening || []).map(fixQ).filter(Boolean);
-      if (a.reading) { const r = fixQ(a.reading); if (r) a.reading = r; }
-    });
+    DB.articles.forEach(sanitizeArticleQuestions);
   }
   renderHome();
   renderSideLevel();
@@ -548,7 +545,7 @@ ${sentRule}
   ],
   "reading": {"q": "英文题干，考查推理或作者态度", "opts": ["A. ...", "B. ...", "C. ...", "D. ..."], "a": 2, "exp": "中文解析，说明为什么其他三项错"},
   "translation": {"en": "从原文挑一个长难句", "ref": "参考译文", "frame": "主干是什么、修饰成分是什么", "err": "学习者常见的译错点"},
-  "collocation": {"ph": "一个值得积累的搭配", "zh": "中文含义", "ex": "原文中的例句", "demo": "一个新的示范句", "frame": "用法要点和常见错误"}
+  "collocation": {"ph": "一个值得积累的搭配", "zh": "中文含义", "ex": "原文中的例句", "demo": "一个新的示范句（必须人称一致、指代清楚：全程用 he 就用 his，不要用 he 开头却中途换成 my；句子自然地道，符合真实语境）", "frame": "用法要点和常见错误"}
 }
 
 words 给 ${Math.max(8, needWords)}–${nWords} 个，必须是正文里真实出现的词，并给每个词配中文释义。listening 必须 2 道题。a 是正确选项的下标（0–3）。所有 opts 必须 4 项，且以 "A. " "B. " "C. " "D. " 开头。`
@@ -625,9 +622,16 @@ function fixQ(q) {
   return { q: String(q.q), opts, a, exp };
 }
 
+// 洗一篇文章的所有题：答案下标越界、答案与解析矛盾等当场纠正
+function sanitizeArticleQuestions(a) {
+  if (!a) return;
+  a.listening = (a.listening || []).map(fixQ).filter(Boolean);
+  if (a.reading) { const r = fixQ(a.reading); if (r) a.reading = r; }
+}
+
 // 从解析文本里抽取"显式答案声明"；没有则返回 -1。
 // 覆盖：making option B the correct answer / option B is correct / the correct answer is B /
-//       answer: B / 正确答案是B / 选B。多处声明冲突时取最后一句（通常是结论）。
+//       answer: B / 正确答案是B / 因此选B。多处声明冲突时取最后一句（通常是结论）。
 function declaredAnswer(exp, n) {
   const s = String(exp || '');
   const pats = [
@@ -830,6 +834,8 @@ function updateFlowUI() {
 
 function openArticle(a) {
   cur = a; curIdx = 0; loop = -1;
+  // 打开时即时洗题：不依赖"启动时迁移"，旧文章/别处写入的矛盾答案当场纠正
+  sanitizeArticleQuestions(a);
   $('#artTitle').textContent = a.title;
   $('#accent').value = curVoice();
   $('#rate').value = String(DB.config.rate || 1);
@@ -849,6 +855,11 @@ function openArticle(a) {
 function buildSents() {
   cur._sents = [];
   cur.paras.forEach((p, pi) => p.en.forEach(en => cur._sents.push({ en, p: pi })));
+}
+function paraSentIndex(pi, si) {
+  let n = 0;
+  for (let p = 0; p < pi && cur && cur.paras[p]; p++) n += cur.paras[p].en.length;
+  return n + si;
 }
 
 /* ---------------- 语音 ---------------- */
@@ -1090,6 +1101,26 @@ $('#qSubmit').onclick = () => {
 };
 $('#toRead').onclick = () => enterStep(nextStep('listen'));
 $('#skipListen').onclick = () => enterStep(nextStep('listen'));
+
+// 听力原文：就地展开，逐句可点朗读，不打断做题流程
+function renderListenScript() {
+  const box = $('#listenScript');
+  if (!box || !cur) return;
+  const paras = cur.paras || [];
+  box.innerHTML = `<div class="ls-head">全文 · 点句子可朗读</div>` + paras.map((p, pi) =>
+    `<div class="ls-para">${(p.en || []).map((s, si) =>
+      `<span class="ls-sent" data-p="${pi}" data-s="${si}">
+        <button class="ls-spk" title="朗读这句">▶</button>${esc(s)}</span>`).join('')}</div>`).join('');
+  $$('#listenScript .ls-sent').forEach(el => {
+    el.onclick = () => speak(paraSentIndex(+el.dataset.p, +el.dataset.s));
+  });
+}
+$('#toggleListenScript').onclick = () => {
+  const box = $('#listenScript');
+  if (!box) return;
+  if (box.hidden) { renderListenScript(); box.hidden = false; $('#toggleListenScript').textContent = '🙈 收起原文'; }
+  else { box.hidden = true; $('#toggleListenScript').textContent = '👀 看听力原文'; }
+};
 
 /* ---------------- 阅读页 ---------------- */
 function mark(text) {
@@ -1417,21 +1448,31 @@ $('#rShow').onclick = () => {
 };
 $('#tInput').oninput = e => { if (cur) { cur._tDraft = e.target.value; save(); } };
 $('#cInput').oninput = e => { if (cur) { cur._cDraft = e.target.value; save(); } };
-$('#tSubmit').onclick = () => {
-  if (!$('#tInput').value.trim()) { toast('先写一句'); return; }
+function showTransAnswer() {
   const t = cur.translation || {};
   $('#tAns').hidden = false;
   $('#tAns').innerHTML = `<b>参考译文</b><br>${esc(t.ref || '')}<br><br><b>句子结构</b><br>${esc(t.frame || '')}<br><br><b>常见错误</b><br>${esc(t.err || '')}`;
+}
+$('#tSubmit').onclick = () => {
+  if (!$('#tInput').value.trim()) { toast('先写一句'); return; }
+  showTransAnswer();
 };
-$('#tShow').onclick = $('#tSubmit').onclick;
-$('#cSubmit').onclick = () => {
-  if (!$('#cInput').value.trim()) { toast('先写一句'); return; }
+$('#tShow').onclick = showTransAnswer; // 看解析不需要先写句子
+function showCollAnswer() {
   const c = cur.collocation || {};
   $('#cAns').hidden = false;
-  $('#cAns').innerHTML = `<b>示范句</b><br>${esc(c.demo || '')}<br><br><b>原文</b><br>${esc(c.ex || '')}<br><br>${esc(c.frame || '')}`;
+  // 示范句人称一致性提示：AI 偶尔会写出 he...my...his 这种混杂句，提醒用户别照抄
+  const demo = String(c.demo || '');
+  const mixed = /\b(he|his|him)\b/i.test(demo) && /\b(my|mine|me)\b/i.test(demo)
+    || /\b(she|her)\b/i.test(demo) && /\b(my|mine|me)\b/i.test(demo);
+  $('#cAns').innerHTML = `<b>示范句</b><br>${esc(demo)}${mixed ? '<div style="color:#C24361;font-size:11px;margin-top:4px">⚠ 这句人称可能不一致，参考搭配用法即可，别照抄</div>' : ''}<br><br><b>原文</b><br>${esc(c.ex || '')}<br><br>${esc(c.frame || '')}`;
+}
+$('#cSubmit').onclick = () => {
+  if (!$('#cInput').value.trim()) { toast('先写一句'); return; }
+  showCollAnswer();
   checkAch();
 };
-$('#cShow').onclick = $('#cSubmit').onclick;
+$('#cShow').onclick = showCollAnswer; // 看解析不需要先写句子
 
 /* ---------------- 完成 ---------------- */
 $('#toDone').onclick = () => {

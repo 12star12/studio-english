@@ -1154,3 +1154,21 @@ textarea:focus{border-color:#C9BCFF;background:#fff}
   .dur-track{height:64px}
   .dur-bars{gap:5px}
 }
+
+/* ================= 听力原文就地展开 ================= */
+.listen-script{
+  margin-top:12px;padding:13px 15px;border-radius:16px;
+  background:#FCFAFF;border:2px solid #EFE9F8;max-height:260px;overflow:auto;
+}
+.ls-head{font-size:10.5px;font-weight:800;color:#A49AC4;margin-bottom:8px;letter-spacing:.04em}
+.ls-para{margin:0 0 9px;line-height:1.9}
+.ls-sent{
+  display:inline;border-radius:6px;padding:1px 2px;cursor:pointer;color:#40366B;
+  transition:.12s;font-family:var(--serif);font-size:13.5px;
+}
+.ls-sent:hover{background:#F0EBFF}
+.ls-spk{
+  border:0;background:#EFEAFF;color:#6C63FF;border-radius:7px;cursor:pointer;
+  font-size:9px;padding:1px 5px;margin-right:3px;vertical-align:middle;font-family:var(--round);
+}
+.ls-spk:hover{background:#6C63FF;color:#fff}
